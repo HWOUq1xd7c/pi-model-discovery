@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-03
+
+### Added
+- Added a free-model verifier CLI and probe pipeline for validating free-tier model availability. ([2de1c6a](https://github.com/MasuRii/pi-model-discovery/commit/2de1c6a8f1ac59162a348d76e52984e5a27d90be))
+- Added an `enabled` config toggle and dynamic builtin provider IDs. ([530f26f](https://github.com/MasuRii/pi-model-discovery/commit/530f26f32112951e91b2d496c7ecdc1493d6b971))
+
+### Changed
+- Consolidated fetch helpers, record validation, cache, and catalog command helpers. ([abb734d](https://github.com/MasuRii/pi-model-discovery/commit/abb734d235f9679cd7c30803534e9f64635d5576) [f27c497](https://github.com/MasuRii/pi-model-discovery/commit/f27c497bcd73d951ccac21de1a69e3cc49c72415) [ad4ff35](https://github.com/MasuRii/pi-model-discovery/commit/ad4ff35ffaf36ac2803191aae22b65fedaad19ee))
+- Updated tests for refactored modules. ([71aa4e5](https://github.com/MasuRii/pi-model-discovery/commit/71aa4e523af3ad0a74eaefa30664738d69991c4c))
+- Updated README with badges, standalone-mode documentation, and related extensions. ([4e575ff](https://github.com/MasuRii/pi-model-discovery/commit/4e575ffdc71ecf0cf8373c7a5fecf3895b1edf1b))
+- Widened Pi peer dependency compatibility to include `^0.80.0` and added vulnerability overrides (`protobufjs`, `ws`). ([8bf9181](https://github.com/MasuRii/pi-model-discovery/commit/8bf91813e6176db85415e3da0e4d69e0f944d468))
+
 ## [0.2.1] - 2026-06-16
 
 ### Changed
