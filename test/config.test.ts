@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -6,10 +6,7 @@ import assert from "node:assert/strict";
 
 import { loadConfig, loadConfigAsync } from "../src/config/loader.js";
 import { createTestApiKey } from "./support/secrets.js";
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
+import { writeJson } from "./support/fixtures.js";
 
 test("config loader defaults debug to false, resolves env refs, and warns on provider collisions", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-model-discovery-config-"));

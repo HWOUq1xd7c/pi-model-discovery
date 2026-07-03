@@ -199,6 +199,36 @@ test("provider cache freshness rejects legacy Claude Opus entries without xhigh 
   assert.equal(isProviderCacheEntryFresh("qianxiang", freshOpusEntry, now), true);
 });
 
+test("provider cache freshness rejects legacy GLM-5.2 entries without xhigh metadata", () => {
+  const now = new Date("2026-05-01T00:10:00.000Z");
+  const staleGlmEntry: CacheEntry = {
+    fetchedAt: "2026-05-01T00:09:00.000Z",
+    ttlMs: 60 * 60 * 1000,
+    authoritative: true,
+    models: [
+      {
+        ...model,
+        id: "@cf/zai-org/glm-5.2",
+        reasoning: true,
+        sources: { dynamic: true, modelsDev: true },
+        capabilityProvenance: { id: "dynamic", reasoning: "modelsDev" },
+      },
+    ],
+  };
+  const freshGlmEntry: CacheEntry = {
+    ...staleGlmEntry,
+    models: [
+      {
+        ...staleGlmEntry.models[0]!,
+        thinkingLevelMap: { xhigh: "max" },
+      },
+    ],
+  };
+
+  assert.equal(isProviderCacheEntryFresh("cloudflare", staleGlmEntry, now), false);
+  assert.equal(isProviderCacheEntryFresh("cloudflare", freshGlmEntry, now), true);
+});
+
 test("provider cache freshness rejects legacy catalog metadata hidden behind cache provenance", () => {
   const now = new Date("2026-05-01T00:10:00.000Z");
   const staleCatalogOverlay: CacheEntry = {

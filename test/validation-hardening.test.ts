@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -11,6 +10,7 @@ import { loadConfig } from "../src/config/loader.js";
 import type { ProviderConfigEntry } from "../src/config/types.js";
 import { applyModelFilters, safeFetchJson } from "../src/discovery/helpers.js";
 import { createTestApiKey } from "./support/secrets.js";
+import { writeJson } from "./support/fixtures.js";
 
 const TEST_API_KEY = createTestApiKey("validation-hardening");
 
@@ -47,10 +47,6 @@ const model: DiscoveredModel = {
   maxTokens: 16_384,
   sources: { test: true },
 };
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
 
 test("allow/block filters dedupe and cap discovered model IDs before registration", () => {
   assert.deepEqual(applyModelFilters(["gpt-live", "gpt-blocked", "claude", "gpt-live", "gpt-extra"], provider), ["gpt-live", "gpt-extra"]);

@@ -47,3 +47,62 @@ test("pagination cursor appending preserves reserved cursor characters", () => {
     "https://api.example.invalid/v1/models?limit=10&after=next%2Fpage%2B1%3Fx%3D1%26y%3D2",
   );
 });
+
+test("readPaginationState rejects __proto__ path segments to prevent prototype pollution", () => {
+  const protoPagination: DiscoveryPaginationConfig = {
+    enabled: true,
+    cursorParam: "after",
+    nextCursorField: "__proto__.polluted",
+    hasMoreField: "meta.has_more",
+  };
+  const beforePolluted = ({} as { polluted?: string }).polluted;
+  assert.equal(beforePolluted, undefined, "baseline: Object.prototype not yet polluted");
+
+  const state = readPaginationState({}, protoPagination);
+
+  // Hardening: __proto__ segments must not traverse the prototype chain.
+  assert.equal(state.nextCursor, undefined, "__proto__ segment must not yield a cursor");
+  assert.equal(({} as { polluted?: string }).polluted, undefined, "Object.prototype must remain unmodified");
+});
+
+test("readPaginationState rejects constructor.prototype path segments", () => {
+  const ctorPagination: DiscoveryPaginationConfig = {
+    enabled: true,
+    cursorParam: "after",
+    nextCursorField: "constructor.prototype.polluted",
+    hasMoreField: "meta.has_more",
+  };
+
+  const state = readPaginationState({}, ctorPagination);
+
+  assert.equal(state.nextCursor, undefined, "constructor.prototype segment must not yield a cursor");
+  assert.equal(({} as { polluted?: string }).polluted, undefined, "Object.prototype must remain unmodified via constructor");
+});
+
+test("readPaginationState rejects prototype path segments", () => {
+  const protoSegmentPagination: DiscoveryPaginationConfig = {
+    enabled: true,
+    cursorParam: "after",
+    nextCursorField: "prototype.value",
+    hasMoreField: "meta.has_more",
+  };
+
+  const state = readPaginationState({ prototype: { value: "leak" } }, protoSegmentPagination);
+
+  assert.equal(state.nextCursor, undefined, "prototype segment must not yield a cursor even if a property exists");
+});
+
+test("readPaginationState preserves normal nested pagination paths after hardening", () => {
+  assert.deepEqual(
+    readPaginationState(
+      {
+        meta: {
+          has_more: false,
+          next: { cursor: "page-9" },
+        },
+      },
+      pagination,
+    ),
+    { hasMore: false, nextCursor: "page-9" },
+  );
+});

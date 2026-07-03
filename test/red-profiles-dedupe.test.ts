@@ -1,64 +1,17 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { DiscoveredModel } from "../src/cache/types.js";
-import { loadConfig } from "../src/config/loader.js";
 import type { ExtensionConfig, ProviderConfigEntry } from "../src/config/types.js";
 import { discoverProviders } from "../src/discovery/engine.js";
 import { ModelRegistrar } from "../src/registry/registrar.js";
 import { createTestApiKey } from "./support/secrets.js";
+import { assertNoSecretLeak, authFirstConfig, headersToRecord, loadWithFixtures, providerById } from "./support/fixtures.js";
 
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
+const RED_PROFILES_PREFIX = "pi-model-discovery-red-profiles-dedupe-";
 
-function authFirstConfig(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    providers: [],
-    autoImport: {
-      enabled: true,
-      discovery: {
-        timeoutMs: 1000,
-        includeDetails: false,
-      },
-    },
-    modelsDev: { enabled: false },
-    ...extra,
-  };
-}
-
-function loadWithFixtures(config: unknown, modelsRoot: unknown, authRoot: unknown) {
-  const dir = mkdtempSync(join(tmpdir(), "pi-model-discovery-red-profiles-dedupe-"));
-  const configPath = join(dir, "config.json");
-  const modelsJsonPath = join(dir, "models.json");
-  const authJsonPath = join(dir, "auth.json");
-  writeJson(configPath, config);
-  writeJson(modelsJsonPath, modelsRoot);
-  writeJson(authJsonPath, authRoot);
-  return loadConfig({ extensionRoot: dir, configPath, modelsJsonPath, authJsonPath });
-}
-
-function providerById(config: ExtensionConfig, providerId: string): ProviderConfigEntry | undefined {
-  return config.providers.find((provider) => provider.id === providerId);
-}
-
-function assertNoSecretLeak(label: string, value: unknown, secrets: string[]): void {
-  const serialized = JSON.stringify(value);
-  for (const secret of secrets) {
-    assert.equal(serialized.includes(secret), false, `${label} must not expose raw credential material`);
-  }
-}
-
-function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
-  if (!headers) return {};
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
-  if (Array.isArray(headers)) return Object.fromEntries(headers.map(([key, value]) => [key.toLowerCase(), value]));
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) result[key.toLowerCase()] = String(value);
-  return result;
+function loadRedFixtures(config: unknown, modelsRoot: unknown, authRoot: unknown) {
+  return loadWithFixtures(config, modelsRoot, authRoot, RED_PROFILES_PREFIX);
 }
 
 function discoveredModel(id: string, name: string): DiscoveredModel {
@@ -113,7 +66,7 @@ test("auth-only credentials import non-Pi-Mono profiles and skip Pi Mono managed
       api: "openai-completions",
     },
   } as const;
-  const loaded = loadWithFixtures(
+  const loaded = loadRedFixtures(
     authFirstConfig(),
     { providers: {} },
     {
@@ -161,7 +114,7 @@ test("auth-only credentials import non-Pi-Mono profiles and skip Pi Mono managed
 
 test("Pi Mono managed Xiaomi token-plan provider IDs are skipped when user credentials exist", () => {
   const secret = `tp-${createTestApiKey("red-xiaomi-token-plan")}`;
-  const loaded = loadWithFixtures(authFirstConfig(), { providers: {} }, { xiaomi: { type: "api_key", key: secret }, "xiaomi-token-plan-ams": { type: "api_key", key: secret } });
+  const loaded = loadRedFixtures(authFirstConfig(), { providers: {} }, { xiaomi: { type: "api_key", key: secret }, "xiaomi-token-plan-ams": { type: "api_key", key: secret } });
 
   assert.equal(providerById(loaded.config, "xiaomi"), undefined, "xiaomi credentials should stay with Pi Mono");
   assert.equal(providerById(loaded.config, "xiaomi-token-plan-ams"), undefined, "xiaomi token-plan credentials should stay with Pi Mono");
@@ -170,7 +123,7 @@ test("Pi Mono managed Xiaomi token-plan provider IDs are skipped when user crede
 
 test("qwen OAuth credentials are approved only for read-only built-in model-list discovery", async (t) => {
   const secret = createTestApiKey("red-qwen-oauth");
-  const loaded = loadWithFixtures(
+  const loaded = loadRedFixtures(
     authFirstConfig(),
     { providers: {} },
     { qwen: { type: "oauth", key: secret, request: { baseUrl: "https://portal.qwen.ai/v1" } } },

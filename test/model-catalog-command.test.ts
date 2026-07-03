@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,10 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type { CacheSchema } from "../src/cache/types.js";
 import { fallbackSummary, mergeRegistryModels, registerModelCatalogCommand } from "../src/commands/model-catalog-command.js";
 import type { ModelsDevLookup } from "../src/enrichment/models-dev.js";
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
+import { writeJson } from "./support/fixtures.js";
 
 function catalogData(overrides: Record<string, unknown> = {}) {
   return {

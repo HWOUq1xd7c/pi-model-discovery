@@ -39,6 +39,7 @@ function provider(overrides: Partial<ProviderConfigEntry> = {}): ProviderConfigE
 
 function extensionConfig(providers: ProviderConfigEntry[]): ExtensionConfig {
   return {
+    enabled: true,
     debug: false,
     cacheTTL: 60_000,
     cacheFile: "cache.json",

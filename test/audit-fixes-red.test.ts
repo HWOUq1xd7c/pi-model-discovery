@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,12 +12,9 @@ import { buildModelsDevLookup, type ModelsDevLookup } from "../src/enrichment/mo
 import { enrichProviderModels } from "../src/enrichment/merger.js";
 import { ModelRegistrar } from "../src/registry/registrar.js";
 import { createTestApiKey } from "./support/secrets.js";
+import { writeJson } from "./support/fixtures.js";
 
 const TEST_API_KEY = createTestApiKey("audit-red");
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
 
 function loadRawConfig(rawConfig: unknown) {
   const dir = mkdtempSync(join(tmpdir(), "pi-model-discovery-audit-red-"));
@@ -59,6 +56,7 @@ function provider(overrides: Partial<ProviderConfigEntry> = {}): ProviderConfigE
 
 function extensionConfig(providers: ProviderConfigEntry[]): ExtensionConfig {
   return {
+    enabled: true,
     debug: false,
     cacheTTL: 60_000,
     cacheFile: "cache.json",

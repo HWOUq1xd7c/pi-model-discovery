@@ -1,67 +1,20 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { loadConfig } from "../src/config/loader.js";
 import type { ExtensionConfig, ProviderConfigEntry } from "../src/config/types.js";
 import { discoverProviders } from "../src/discovery/engine.js";
 import { createTestApiKey } from "./support/secrets.js";
+import { assertNoSecretLeak, authFirstConfig, headersToRecord, loadWithFixtures, providerById } from "./support/fixtures.js";
 
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value), "utf-8");
-}
+const AUTH_FIRST_PREFIX = "pi-model-discovery-auth-first-red-";
 
-function loadWithFixtures(config: unknown, modelsRoot: unknown, authRoot: unknown) {
-  const dir = mkdtempSync(join(tmpdir(), "pi-model-discovery-auth-first-red-"));
-  const configPath = join(dir, "config.json");
-  const modelsJsonPath = join(dir, "models.json");
-  const authJsonPath = join(dir, "auth.json");
-  writeJson(configPath, config);
-  writeJson(modelsJsonPath, modelsRoot);
-  writeJson(authJsonPath, authRoot);
-  return loadConfig({ extensionRoot: dir, configPath, modelsJsonPath, authJsonPath });
-}
-
-function authFirstConfig(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    providers: [],
-    autoImport: {
-      enabled: true,
-      discovery: {
-        timeoutMs: 1000,
-        includeDetails: false,
-      },
-    },
-    modelsDev: { enabled: false },
-    ...extra,
-  };
-}
-
-function assertNoSecretLeak(label: string, value: unknown, secrets: string[]): void {
-  const serialized = JSON.stringify(value);
-  for (const secret of secrets) {
-    assert.equal(serialized.includes(secret), false, `${label} must not expose raw credential material`);
-  }
-}
-
-function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
-  if (!headers) return {};
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
-  if (Array.isArray(headers)) return Object.fromEntries(headers.map(([key, value]) => [key.toLowerCase(), value]));
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) result[key.toLowerCase()] = String(value);
-  return result;
-}
-
-function providerById(config: ExtensionConfig, providerId: string): ProviderConfigEntry | undefined {
-  return config.providers.find((provider) => provider.id === providerId);
+function loadAuthFirstFixtures(config: unknown, modelsRoot: unknown, authRoot: unknown) {
+  return loadWithFixtures(config, modelsRoot, authRoot, AUTH_FIRST_PREFIX);
 }
 
 test("auth-only API-key provider uses a built-in provider profile fallback for read-only model discovery", async (t) => {
   const nvidiaKey = createTestApiKey("auth-first-nvidia");
-  const loaded = loadWithFixtures(authFirstConfig(), { providers: {} }, { nvidia: { type: "api_key", key: nvidiaKey } });
+  const loaded = loadAuthFirstFixtures(authFirstConfig(), { providers: {} }, { nvidia: { type: "api_key", key: nvidiaKey } });
 
   assertNoSecretLeak("auth-only fallback warnings", loaded.warnings, [nvidiaKey]);
   const provider = providerById(loaded.config, "nvidia");
@@ -95,7 +48,7 @@ test("auth-only API-key provider uses a built-in provider profile fallback for r
 test("auth plus models.json provider uses models.json metadata and auth.json credentials", async (t) => {
   const authKey = createTestApiKey("auth-first-myproxy");
   const modelsJsonKey = createTestApiKey("models-json-myproxy");
-  const loaded = loadWithFixtures(
+  const loaded = loadAuthFirstFixtures(
     authFirstConfig(),
     {
       providers: {
@@ -151,7 +104,7 @@ test("auth plus models.json provider uses models.json metadata and auth.json cre
 test("OAuth credentials are imported only for built-in profiles that approve read-only model-list discovery", async (t) => {
   const cloudflareOauth = createTestApiKey("auth-first-cloudflare-oauth");
   const unsupportedOauth = createTestApiKey("auth-first-factoryai-oauth");
-  const loaded = loadWithFixtures(
+  const loaded = loadAuthFirstFixtures(
     authFirstConfig(),
     { providers: {} },
     {
@@ -193,7 +146,7 @@ test("OAuth credentials are imported only for built-in profiles that approve rea
 
 test("Pi Mono managed providers with user credentials are not auto-imported for discovery", () => {
   const openaiKey = createTestApiKey("auth-first-openai");
-  const loaded = loadWithFixtures(
+  const loaded = loadAuthFirstFixtures(
     authFirstConfig(),
     {
       providers: {
@@ -214,7 +167,7 @@ test("Pi Mono managed providers with user credentials are not auto-imported for 
 
 test("unsupported auth-only providers are skipped with a redacted warning", () => {
   const unsupportedKey = createTestApiKey("auth-first-unsupported");
-  const loaded = loadWithFixtures(authFirstConfig(), { providers: {} }, { "unknown-auth-only": { type: "api_key", key: unsupportedKey } });
+  const loaded = loadAuthFirstFixtures(authFirstConfig(), { providers: {} }, { "unknown-auth-only": { type: "api_key", key: unsupportedKey } });
 
   assert.equal(providerById(loaded.config, "unknown-auth-only"), undefined);
   assert.ok(

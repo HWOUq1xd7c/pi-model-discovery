@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { ExtensionConfig, ProviderConfigEntry } from "../src/config/types.js";
 import { discoverProviders } from "../src/discovery/engine.js";
 import { createTestApiKey } from "./support/secrets.js";
+import { configFor } from "./support/fixtures.js";
 
 const TEST_API_KEY = createTestApiKey("now-contract");
 
@@ -30,37 +31,6 @@ function provider(overrides: Partial<ProviderConfigEntry> = {}): ProviderConfigE
     modelDefaults: {},
     source: "explicit",
     ...overrides,
-  };
-}
-
-function configFor(entry: ProviderConfigEntry): ExtensionConfig {
-  return {
-    debug: false,
-    cacheTTL: 60_000,
-    cacheFile: "cache.json",
-    maxModels: 10,
-    modelsDev: { enabled: false, url: "https://example.invalid/models-dev.json", timeoutMs: 1000 },
-    autoImport: {
-      enabled: false,
-      allowUnauthenticated: false,
-      modelsJsonPath: "models.json",
-      authJsonPath: "auth.json",
-      multiAuthJsonPath: "multi-auth.json",
-      includeProviders: [],
-      excludeProviders: [],
-      hiddenProviders: [],
-      externalStaticProviderIds: [],
-      discovery: {
-        enabled: true,
-        headers: {},
-        timeoutMs: 1000,
-        ttlMs: 60_000,
-        includeDetails: false,
-        typeByProvider: {},
-        endpointPathByProvider: {},
-      },
-    },
-    providers: [entry],
   };
 }
 
