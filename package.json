@@ -1,6 +1,6 @@
 {
   "name": "pi-model-discovery",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": false,
   "description": "Pi extension that discovers provider models, enriches metadata, caches results, and registers them dynamically.",
   "type": "module",
