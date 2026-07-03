@@ -124,7 +124,7 @@ async function discoverProviderResult(provider: ProviderConfigEntry): Promise<Ra
 
 export async function discoverProviders(config: ExtensionConfig): Promise<RawDiscoveryResult[]> {
   const enabledProviders = config.providers.filter((provider) => provider.discovery.enabled);
-  const results: Array<RawDiscoveryResult | undefined> = new Array(enabledProviders.length);
+  const results = new Array<RawDiscoveryResult | undefined>(enabledProviders.length);
   let nextIndex = 0;
 
   async function worker(): Promise<void> {

@@ -7,6 +7,13 @@ export interface FetchJsonResult<T> {
   error?: string;
 }
 
+/** Header names that carry secrets and must be stripped when credentials are withheld. */
+const SENSITIVE_HEADER_PATTERN = /authorization|api[_-]?key|token|secret|password/i;
+
+export function isSensitiveHeaderName(name: string): boolean {
+  return SENSITIVE_HEADER_PATTERN.test(name);
+}
+
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, "");
 }
@@ -18,21 +25,58 @@ export function buildUrl(baseUrl: string, endpointPath: string): string {
   return path ? `${base}/${path}` : base;
 }
 
-export function buildDiscoveryHeaders(provider: ProviderConfigEntry): Record<string, string> {
+export interface ProviderHeaderOptions {
+  /** Headers merged after provider.headers; defaults to provider.discovery.headers. */
+  mergedHeaders?: Record<string, string>;
+  /** When true, sets content-type: application/json. */
+  jsonBody?: boolean;
+  /** When false, strips sensitive headers and withholds the bearer token. */
+  sendCredentials?: boolean;
+  /** Override the auth material; defaults to the provider's authHeader/apiKey. */
+  auth?: { authHeader: boolean; apiKey: string };
+}
+
+function hasAuthorizationHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === "authorization");
+}
+
+/**
+ * Build discovery/verification request headers from a provider. Consolidates the
+ * header construction shared by discovery (always send) and free-model
+ * verification (json body, credential stripping, credential rotation).
+ */
+export function buildProviderHeaders(provider: ProviderConfigEntry, options: ProviderHeaderOptions = {}): Record<string, string> {
   const headers: Record<string, string> = {
     accept: "application/json",
     ...provider.headers,
-    ...provider.discovery.headers,
+    ...(options.mergedHeaders ?? provider.discovery.headers),
   };
-  if (provider.authHeader && !Object.keys(headers).some((key) => key.toLowerCase() === "authorization")) {
-    headers.authorization = `Bearer ${provider.apiKey}`;
+  if (options.jsonBody) headers["content-type"] = "application/json";
+  if (options.sendCredentials === false) {
+    for (const key of Object.keys(headers)) {
+      if (isSensitiveHeaderName(key)) delete headers[key];
+    }
+  }
+  const auth = options.auth ?? { authHeader: provider.authHeader, apiKey: provider.apiKey };
+  if (auth.authHeader && options.sendCredentials !== false && !hasAuthorizationHeader(headers)) {
+    headers.authorization = `Bearer ${auth.apiKey}`;
   }
   return headers;
 }
 
-export async function safeFetchJson<T>(url: string, init: RequestInit, timeoutMs: number): Promise<FetchJsonResult<T>> {
+export function buildDiscoveryHeaders(provider: ProviderConfigEntry): Record<string, string> {
+  return buildProviderHeaders(provider);
+}
+
+/** Create an AbortController/timeout pair for a fetch; call `clear` in a finally block. */
+export function createFetchTimeout(timeoutMs: number): { controller: AbortController; clear: () => void } {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return { controller, clear: () => clearTimeout(timeout) };
+}
+
+export async function safeFetchJson<T>(url: string, init: RequestInit, timeoutMs: number): Promise<FetchJsonResult<T>> {
+  const { controller, clear } = createFetchTimeout(timeoutMs);
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
@@ -48,8 +92,21 @@ export async function safeFetchJson<T>(url: string, init: RequestInit, timeoutMs
     const isAbort = error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message));
     return { ok: false, status: 0, error: isAbort ? `request timed out after ${timeoutMs}ms` : message };
   } finally {
-    clearTimeout(timeout);
+    clear();
   }
+}
+
+/** GET a discovery endpoint as JSON, throwing a contextual error on failure. */
+export async function fetchDiscoveryPayload<T>(provider: ProviderConfigEntry, endpointPath: string, failureMessage: string): Promise<T> {
+  const response = await safeFetchJson<T>(
+    buildUrl(provider.baseUrl, endpointPath),
+    { method: "GET", headers: buildDiscoveryHeaders(provider) },
+    provider.discovery.timeoutMs,
+  );
+  if (!response.ok || !response.data) {
+    throw new Error(response.error ?? failureMessage);
+  }
+  return response.data;
 }
 
 export function applyModelFilters(modelIds: string[], provider: ProviderConfigEntry): string[] {

@@ -1,6 +1,6 @@
 import type { DiscoveryDefaults, ProviderConfigEntry } from "../config/types.js";
 import { isRecord } from "../shared/validation.js";
-import { applyModelFilters, buildDiscoveryHeaders, buildUrl, safeFetchJson } from "./helpers.js";
+import { applyModelFilters, buildDiscoveryHeaders, buildUrl, fetchDiscoveryPayload, safeFetchJson } from "./helpers.js";
 import type { RawDiscoveredModel } from "./types.js";
 
 const OLLAMA_DETAILS_CONCURRENCY = 8;
@@ -36,7 +36,8 @@ function readOllamaModelEntries(payload: unknown): NonNullable<OllamaTagsRespons
   if (!isRecord(payload)) {
     throw new Error("Malformed Ollama discovery payload: expected an object with models[].");
   }
-  if (Array.isArray(payload.models)) return payload.models;
+  const models = payload.models;
+  if (Array.isArray(models)) return models as NonNullable<OllamaTagsResponse["models"]>;
   throw new Error("Malformed Ollama discovery payload: expected models[] model list.");
 }
 
@@ -51,16 +52,9 @@ export function parseOllamaTagsResponse(payload: OllamaTagsResponse, provider: P
 
 export async function discoverOllama(provider: ProviderConfigEntry): Promise<RawDiscoveredModel[]> {
   const endpointPath = provider.discovery.endpointPath ?? "/api/tags";
-  const tagsResponse = await safeFetchJson<OllamaTagsResponse>(
-    buildUrl(provider.baseUrl, endpointPath),
-    { method: "GET", headers: buildDiscoveryHeaders(provider) },
-    provider.discovery.timeoutMs,
-  );
-  if (!tagsResponse.ok || !tagsResponse.data) {
-    throw new Error(tagsResponse.error ?? "Ollama tags discovery failed");
-  }
+  const tagsPayload = await fetchDiscoveryPayload<OllamaTagsResponse>(provider, endpointPath, "Ollama tags discovery failed");
 
-  const models = parseOllamaTagsResponse(tagsResponse.data, provider);
+  const models = parseOllamaTagsResponse(tagsPayload, provider);
   if (!provider.discovery.includeDetails) return models;
 
   const enriched: RawDiscoveredModel[] = [];

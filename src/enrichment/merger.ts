@@ -261,20 +261,20 @@ function isBlazeApiClaudeRoute(provider: ProviderConfigEntry, model: DiscoveredM
   ].some(isBlazeApiClaudeRouteIdentifier);
 }
 
+function collectModelIdentities(model: DiscoveredModel): string[] {
+  return [model.id, model.name, model.endpointMetadata?.providerId, model.endpointMetadata?.routingGroup].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+}
+
 function isOpenAICompatibleReasoningModel(provider: ProviderConfigEntry, model: DiscoveredModel): boolean {
   if (provider.api !== "openai-completions") return false;
   if (model.reasoning !== true) return false;
-  const identities = [model.id, model.name, model.endpointMetadata?.providerId, model.endpointMetadata?.routingGroup].filter(
-    (value): value is string => typeof value === "string" && value.length > 0,
-  );
-  return identities.some((identity) => OPENAI_REASONING_MODEL_PATTERN.test(identity));
+  return collectModelIdentities(model).some((identity) => OPENAI_REASONING_MODEL_PATTERN.test(identity));
 }
 
 function supportsOpenAIReasoningEffort(model: DiscoveredModel): boolean {
-  const identities = [model.id, model.name, model.endpointMetadata?.providerId, model.endpointMetadata?.routingGroup].filter(
-    (value): value is string => typeof value === "string" && value.length > 0,
-  );
-  return identities.some((identity) => OPENAI_REASONING_EFFORT_MODEL_PATTERN.test(identity));
+  return collectModelIdentities(model).some((identity) => OPENAI_REASONING_EFFORT_MODEL_PATTERN.test(identity));
 }
 
 function applyOpenAIReasoningCompatDefaults(model: DiscoveredModel): DiscoveredModel {

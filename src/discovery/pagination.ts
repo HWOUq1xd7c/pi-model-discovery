@@ -6,12 +6,21 @@ export interface PaginationState {
   nextCursor?: string;
 }
 
+/**
+ * Path segments that traverse (or could traverse) an object's prototype chain.
+ * Rejecting them in `readPath()` prevents prototype-pollution and prototype-chain
+ * information leaks when pagination field paths are sourced from provider config.
+ * See Semgrep `javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop`.
+ */
+const PROTOTYPE_POLLUTION_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 function readPath(payload: unknown, path: string): unknown {
   if (!path) return undefined;
   let current: unknown = payload;
   for (const segment of path.split(".")) {
+    if (PROTOTYPE_POLLUTION_SEGMENTS.has(segment)) return undefined;
     if (!isRecord(current)) return undefined;
-    current = current[segment];
+    current = current[segment]; // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop — segment is denylisted against __proto__/constructor/prototype above (PROTOTYPE_POLLUTION_SEGMENTS) and current is type-narrowed to a record, so no prototype-chain write occurs.
   }
   return current;
 }

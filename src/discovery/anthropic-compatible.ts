@@ -1,6 +1,6 @@
 import type { ProviderConfigEntry } from "../config/types.js";
 import { isRecord } from "../shared/validation.js";
-import { applyModelFilters, buildDiscoveryHeaders, buildUrl, safeFetchJson } from "./helpers.js";
+import { applyModelFilters, fetchDiscoveryPayload } from "./helpers.js";
 import type { RawDiscoveredModel } from "./types.js";
 
 interface AnthropicModelEntry {
@@ -43,13 +43,6 @@ export function parseAnthropicModelsResponse(payload: AnthropicModelsResponse, p
 
 export async function discoverAnthropicCompatible(provider: ProviderConfigEntry): Promise<RawDiscoveredModel[]> {
   const endpointPath = provider.discovery.endpointPath ?? "models";
-  const response = await safeFetchJson<AnthropicModelsResponse>(
-    buildUrl(provider.baseUrl, endpointPath),
-    { method: "GET", headers: buildDiscoveryHeaders(provider) },
-    provider.discovery.timeoutMs,
-  );
-  if (!response.ok || !response.data) {
-    throw new Error(response.error ?? "Anthropic-compatible model discovery failed");
-  }
-  return parseAnthropicModelsResponse(response.data, provider);
+  const payload = await fetchDiscoveryPayload<AnthropicModelsResponse>(provider, endpointPath, "Anthropic-compatible model discovery failed");
+  return parseAnthropicModelsResponse(payload, provider);
 }

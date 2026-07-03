@@ -2,6 +2,7 @@ import type { DiscoveryDefaults, InputModality, OutputModality } from "../config
 import { safeFetchJson } from "../discovery/helpers.js";
 import { readPositiveNumber, readStringArray } from "../shared/arrays.js";
 import { isRecord } from "../shared/validation.js";
+import { assembleCost } from "./defaults.js";
 import { buildModelsDevLookup, type ModelsDevLookup } from "./models-dev.js";
 
 const OPENROUTER_SOURCE = "openrouter";
@@ -20,19 +21,15 @@ function pricePerTokenToPerMillion(value: unknown): number | undefined {
 
 function readPricing(value: unknown): DiscoveryDefaults["cost"] | undefined {
   if (!isRecord(value)) return undefined;
-  const cost: NonNullable<DiscoveryDefaults["cost"]> = {};
-  const input = pricePerTokenToPerMillion(value.prompt);
-  const output = pricePerTokenToPerMillion(value.completion);
-  const cacheRead = pricePerTokenToPerMillion(value.input_cache_read);
-  const cacheWrite = pricePerTokenToPerMillion(value.input_cache_write);
-  if (input !== undefined) cost.input = input;
-  if (output !== undefined) cost.output = output;
-  if (cacheRead !== undefined) cost.cacheRead = cacheRead;
-  if (cacheWrite !== undefined) cost.cacheWrite = cacheWrite;
-  return Object.keys(cost).length > 0 ? cost : undefined;
+  return assembleCost({
+    input: pricePerTokenToPerMillion(value.prompt),
+    output: pricePerTokenToPerMillion(value.completion),
+    cacheRead: pricePerTokenToPerMillion(value.input_cache_read),
+    cacheWrite: pricePerTokenToPerMillion(value.input_cache_write),
+  });
 }
 
-function readModalities(architecture: unknown): Pick<DiscoveryDefaults, "input" | "output" | "capabilities"> {
+function readOpenRouterModalities(architecture: unknown): Pick<DiscoveryDefaults, "input" | "output" | "capabilities"> {
   if (!isRecord(architecture)) return {};
   const capabilities: NonNullable<DiscoveryDefaults["capabilities"]> = {};
   const input: InputModality[] = readStringArray(architecture.input_modalities).flatMap((modality): InputModality[] => {
@@ -79,7 +76,7 @@ function modelSlugFromId(id: string): string | undefined {
 function toModelsDevCompatibleModel(candidate: unknown): Record<string, unknown> | undefined {
   if (!isRecord(candidate) || typeof candidate.id !== "string" || candidate.id.length === 0) return undefined;
   const id = candidate.id;
-  const architecture = readModalities(candidate.architecture);
+  const architecture = readOpenRouterModalities(candidate.architecture);
   const supportedCapabilities = readSupportedParameterCapabilities(candidate.supported_parameters);
   const topProvider = isRecord(candidate.top_provider) ? candidate.top_provider : undefined;
   const supportedParameters = readStringArray(candidate.supported_parameters);

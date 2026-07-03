@@ -1,7 +1,7 @@
 import type { CapabilityFlags, Cost, DiscoveryDefaults, InputModality, OutputModality } from "../config/types.js";
 import { pushUnique, readPositiveNumber } from "../shared/arrays.js";
 import { isRecord } from "../shared/validation.js";
-import { normalizeOutput } from "./defaults.js";
+import { assembleCost, normalizeOutput } from "./defaults.js";
 
 const PI_MONO_INPUT_MODALITIES = new Set(["text", "image"]);
 
@@ -21,16 +21,12 @@ function toCamelCase(value: string): string {
 
 function readCost(value: unknown): Partial<Cost> | undefined {
   if (!isRecord(value)) return undefined;
-  const cost: Partial<Cost> = {};
-  const input = readNonNegativeNumber(value, "input");
-  const output = readNonNegativeNumber(value, "output");
-  const cacheRead = readNonNegativeNumber(value, "cache_read") ?? readNonNegativeNumber(value, "cacheRead");
-  const cacheWrite = readNonNegativeNumber(value, "cache_write") ?? readNonNegativeNumber(value, "cacheWrite");
-  if (input !== undefined) cost.input = input;
-  if (output !== undefined) cost.output = output;
-  if (cacheRead !== undefined) cost.cacheRead = cacheRead;
-  if (cacheWrite !== undefined) cost.cacheWrite = cacheWrite;
-  return Object.keys(cost).length > 0 ? cost : undefined;
+  return assembleCost({
+    input: readNonNegativeNumber(value, "input"),
+    output: readNonNegativeNumber(value, "output"),
+    cacheRead: readNonNegativeNumber(value, "cache_read") ?? readNonNegativeNumber(value, "cacheRead"),
+    cacheWrite: readNonNegativeNumber(value, "cache_write") ?? readNonNegativeNumber(value, "cacheWrite"),
+  });
 }
 
 function readContextPricingTierSize(value: unknown): number | undefined {
@@ -65,7 +61,7 @@ function readInputModalities(value: unknown, capabilities: CapabilityFlags): Inp
   return input.length > 0 ? input : undefined;
 }
 
-function readModalities(value: unknown, capabilities: CapabilityFlags): Pick<DiscoveryDefaults, "input" | "output"> {
+function readModelsDevModalities(value: unknown, capabilities: CapabilityFlags): Pick<DiscoveryDefaults, "input" | "output"> {
   if (!isRecord(value)) return {};
   return {
     input: readInputModalities(value.input, capabilities),
@@ -126,7 +122,7 @@ export function mapModelsDevRecordToPiMetadata(candidate: Record<string, unknown
   if (typeof candidate.reasoning === "boolean") metadata.reasoning = candidate.reasoning;
   const claudeOpusEffort = metadata.reasoning === true ? claudeOpusXhighEffort(candidate, id) : undefined;
   if (claudeOpusEffort) metadata.thinkingLevelMap = { xhigh: claudeOpusEffort };
-  const modalities = readModalities(candidate.modalities, capabilities);
+  const modalities = readModelsDevModalities(candidate.modalities, capabilities);
   if (modalities.input) metadata.input = modalities.input;
   if (modalities.output) metadata.output = modalities.output as OutputModality[];
   if (Object.keys(capabilities).length > 0) metadata.capabilities = capabilities;

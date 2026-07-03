@@ -20,6 +20,23 @@ export interface BuiltInProviderProfile {
   supportsOAuthDiscovery: boolean;
 }
 
+/**
+ * Build a Xiaomi token-plan regional profile. The cn/ams/sgp endpoints share
+ * every field except the region segment, so they are generated from a single
+ * helper instead of copy-pasted literal blocks.
+ */
+function xiaomiTokenPlanProfile(region: string): BuiltInProviderProfile {
+  return {
+    id: `xiaomi-token-plan-${region}`,
+    baseUrl: `https://token-plan-${region}.xiaomimimo.com/anthropic`,
+    api: "anthropic-messages" as ProviderConfigEntry["api"],
+    discoveryType: "openai-compat",
+    discoveryBlockModels: ["-tts"],
+    supportsApiKeyDiscovery: true,
+    supportsOAuthDiscovery: false,
+  };
+}
+
 const BUILT_IN_PROVIDER_PROFILES: Readonly<Record<string, BuiltInProviderProfile>> = {
   nvidia: {
     id: "nvidia",
@@ -215,33 +232,9 @@ const BUILT_IN_PROVIDER_PROFILES: Readonly<Record<string, BuiltInProviderProfile
     supportsApiKeyDiscovery: true,
     supportsOAuthDiscovery: false,
   },
-  "xiaomi-token-plan-cn": {
-    id: "xiaomi-token-plan-cn",
-    baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
-    api: "anthropic-messages" as ProviderConfigEntry["api"],
-    discoveryType: "openai-compat",
-    discoveryBlockModels: ["-tts"],
-    supportsApiKeyDiscovery: true,
-    supportsOAuthDiscovery: false,
-  },
-  "xiaomi-token-plan-ams": {
-    id: "xiaomi-token-plan-ams",
-    baseUrl: "https://token-plan-ams.xiaomimimo.com/anthropic",
-    api: "anthropic-messages" as ProviderConfigEntry["api"],
-    discoveryType: "openai-compat",
-    discoveryBlockModels: ["-tts"],
-    supportsApiKeyDiscovery: true,
-    supportsOAuthDiscovery: false,
-  },
-  "xiaomi-token-plan-sgp": {
-    id: "xiaomi-token-plan-sgp",
-    baseUrl: "https://token-plan-sgp.xiaomimimo.com/anthropic",
-    api: "anthropic-messages" as ProviderConfigEntry["api"],
-    discoveryType: "openai-compat",
-    discoveryBlockModels: ["-tts"],
-    supportsApiKeyDiscovery: true,
-    supportsOAuthDiscovery: false,
-  },
+  "xiaomi-token-plan-cn": xiaomiTokenPlanProfile("cn"),
+  "xiaomi-token-plan-ams": xiaomiTokenPlanProfile("ams"),
+  "xiaomi-token-plan-sgp": xiaomiTokenPlanProfile("sgp"),
   cline: {
     id: "cline",
     baseUrl: "https://api.cline.bot/api/v1",

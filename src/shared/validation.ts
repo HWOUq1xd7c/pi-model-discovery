@@ -16,6 +16,14 @@ export function uniqueNonEmptyStrings(values: unknown): string[] {
   return Array.from(new Set(normalized));
 }
 
+/** Return the first boolean value in {@link values}, or `undefined` if none are booleans. */
+export function readBooleanValue(...values: unknown[]): boolean | undefined {
+  for (const value of values) {
+    if (typeof value === "boolean") return value;
+  }
+  return undefined;
+}
+
 function isLocalHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
   return LOCAL_HOSTNAMES.has(normalized) || normalized.startsWith("127.");

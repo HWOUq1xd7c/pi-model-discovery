@@ -25,16 +25,18 @@ export const GLOBAL_DEFAULTS: {
 
 export const SUPPORTED_MODALITIES = new Set(["text", "image", "audio", "video"]);
 
-export function normalizeInput(value: unknown): InputModality[] | undefined {
+function normalizeModalityArray<T extends string>(value: unknown): T[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const modalities = value.filter((entry): entry is InputModality => typeof entry === "string" && SUPPORTED_MODALITIES.has(entry));
+  const modalities = value.filter((entry): entry is T => typeof entry === "string" && SUPPORTED_MODALITIES.has(entry));
   return modalities.length > 0 ? Array.from(new Set(modalities)) : undefined;
 }
 
+export function normalizeInput(value: unknown): InputModality[] | undefined {
+  return normalizeModalityArray<InputModality>(value);
+}
+
 export function normalizeOutput(value: unknown): OutputModality[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const modalities = value.filter((entry): entry is OutputModality => typeof entry === "string" && SUPPORTED_MODALITIES.has(entry));
-  return modalities.length > 0 ? Array.from(new Set(modalities)) : undefined;
+  return normalizeModalityArray<OutputModality>(value);
 }
 
 export function mergeCost(base: Cost, override: Partial<Cost> | undefined): Cost {
@@ -44,4 +46,14 @@ export function mergeCost(base: Cost, override: Partial<Cost> | undefined): Cost
     cacheRead: override?.cacheRead ?? base.cacheRead,
     cacheWrite: override?.cacheWrite ?? base.cacheWrite,
   };
+}
+
+/** Assemble a {@link Cost} partial from individually-resolved price components. */
+export function assembleCost(components: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): Partial<Cost> | undefined {
+  const cost: Partial<Cost> = {};
+  if (components.input !== undefined) cost.input = components.input;
+  if (components.output !== undefined) cost.output = components.output;
+  if (components.cacheRead !== undefined) cost.cacheRead = components.cacheRead;
+  if (components.cacheWrite !== undefined) cost.cacheWrite = components.cacheWrite;
+  return Object.keys(cost).length > 0 ? cost : undefined;
 }

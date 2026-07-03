@@ -4,7 +4,8 @@ import { appendPaginationCursor, readPaginationState } from "./pagination.js";
 import { resolveOpenAICompatibleModelsEndpoint } from "./provider-quirks.js";
 import { pushUnique } from "../shared/arrays.js";
 import { catalogVariantCombinationLookupIds, stripCatalogLookupPrefix } from "../shared/catalog-identity.js";
-import { isRecord } from "../shared/validation.js";
+import { isRecord, readBooleanValue } from "../shared/validation.js";
+import { readPricingIsFree } from "../shared/pricing.js";
 import type { EndpointPricingMetadata, RawDiscoveredModel } from "./types.js";
 
 interface OpenAIModelEntry {
@@ -62,7 +63,7 @@ function readStringArrayValue(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()) : [];
 }
 
-function isTextCompletionModel(entry: OpenAIModelEntry): boolean {
+function isOpenAITextCompletionEntry(entry: OpenAIModelEntry): boolean {
   const outputModalities = readStringArrayValue(entry.output_modalities).map((modality) => modality.toLowerCase());
   if (outputModalities.length > 0 && !outputModalities.includes("text")) return false;
 
@@ -251,13 +252,6 @@ function readCatalogLookupIds(entry: OpenAIModelEntry, id: string): string[] | u
   return lookupIds.length > 0 ? lookupIds : undefined;
 }
 
-function readBooleanValue(...values: unknown[]): boolean | undefined {
-  for (const value of values) {
-    if (typeof value === "boolean") return value;
-  }
-  return undefined;
-}
-
 function readStringValue(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -265,9 +259,13 @@ function readStringValue(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 function readNumberValue(...values: unknown[]): number | undefined {
   for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    if (isNonNegativeFiniteNumber(value)) return value;
   }
   return undefined;
 }
@@ -289,28 +287,9 @@ function deriveIsFree(isPremium: boolean | undefined, requiredPlan: string | und
   return multiplier === 0 ? true : undefined;
 }
 
-function readPricingNumberValue(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
-    if (typeof value === "string" && value.trim()) {
-      const parsed = Number(value.trim());
-      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-    }
-  }
-  return undefined;
-}
-
-function readPricingIsFree(value: unknown): boolean | undefined {
-  if (!isRecord(value)) return undefined;
-  const input = readPricingNumberValue(value.prompt, value.input);
-  const output = readPricingNumberValue(value.completion, value.output);
-  if (input === undefined || output === undefined) return undefined;
-  return input === 0 && output === 0;
-}
-
 function readPlanTierValue(...values: unknown[]): number | string | undefined {
   for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    if (isNonNegativeFiniteNumber(value)) return value;
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return undefined;
@@ -399,7 +378,7 @@ function readModelEntries(payload: unknown): OpenAIModelEntry[] {
 function parseOpenAIModelEntries(entries: OpenAIModelEntry[], responseBaseUrl?: string): RawDiscoveredModel[] {
   const parsed: RawDiscoveredModel[] = [];
   for (const entry of entries) {
-    if (!isRecord(entry) || !isTextCompletionModel(entry)) continue;
+    if (!isRecord(entry) || !isOpenAITextCompletionEntry(entry)) continue;
     const id = readDiscoveredModelId(entry);
     if (!id) continue;
     const model: RawDiscoveredModel = { id };
