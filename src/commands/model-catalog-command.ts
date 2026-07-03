@@ -516,12 +516,12 @@ class ModelCatalogModal {
     return lines;
   }
 
+  private wideColumnWidths(width: number): { freeWidth: number; cacheWidth: number; contextWidth: number; maxWidth: number; labelWidth: number } {
+    return { freeWidth: 5, cacheWidth: 6, contextWidth: 5, maxWidth: 5, labelWidth: Math.max(12, width - 30) };
+  }
+
   private renderWideTableHeader(width: number): string {
-    const freeWidth = 5;
-    const cacheWidth = 6;
-    const contextWidth = 5;
-    const maxWidth = 5;
-    const labelWidth = Math.max(12, width - 30);
+    const { freeWidth, cacheWidth, contextWidth, maxWidth, labelWidth } = this.wideColumnWidths(width);
     return bold(this.theme, `${pad("Provider / Model", labelWidth + 3)} ${pad("Free", freeWidth)} ${pad("Cache", cacheWidth)} ${pad("Ctx", contextWidth)} ${pad("Max", maxWidth)}`);
   }
 
@@ -530,32 +530,25 @@ class ModelCatalogModal {
     return bold(this.theme, `${pad("Provider / Model", labelWidth + 3)} ${pad("Free", 5)} ${pad("Ctx", 6)} ${pad("Max", 6)} ${pad("Cost", 6)}`);
   }
 
-  private renderWideRows(models: CatalogModel[], width: number, rows: number): string[] {
+  private renderModelRows(models: CatalogModel[], rows: number, labelWidth: number, buildRow: (item: CatalogModel, marker: string, label: string, labelWidth: number) => string): string[] {
     if (models.length === 0) return [color(this.theme, "dim", "No models match the current query and filters.")];
-    const freeWidth = 5;
-    const cacheWidth = 6;
-    const contextWidth = 5;
-    const maxWidth = 5;
-    const labelWidth = Math.max(12, width - 30);
     return models.slice(this.scrollTop, this.scrollTop + rows).map((item, offset) => {
       const index = this.scrollTop + offset;
       const marker = index === this.selectedIndex ? ">>" : "  ";
       const label = `${item.providerId}/${item.model.id}`;
-      const row = `${marker} ${pad(label, labelWidth)} ${pad(freeLabel(item.model), freeWidth)} ${pad(cacheStatus(item.provider), cacheWidth)} ${pad(formatCompactNumber(item.model.contextWindow), contextWidth)} ${pad(formatCompactNumber(item.model.maxTokens), maxWidth)}`;
+      const row = buildRow(item, marker, label, labelWidth);
       return index === this.selectedIndex ? color(this.theme, "accent", row) : row;
     });
   }
 
+  private renderWideRows(models: CatalogModel[], width: number, rows: number): string[] {
+    const { freeWidth, cacheWidth, contextWidth, maxWidth, labelWidth } = this.wideColumnWidths(width);
+    return this.renderModelRows(models, rows, labelWidth, (item, marker, label, lw) => `${marker} ${pad(label, lw)} ${pad(freeLabel(item.model), freeWidth)} ${pad(cacheStatus(item.provider), cacheWidth)} ${pad(formatCompactNumber(item.model.contextWindow), contextWidth)} ${pad(formatCompactNumber(item.model.maxTokens), maxWidth)}`);
+  }
+
   private renderNarrowRows(models: CatalogModel[], width: number, rows: number): string[] {
-    if (models.length === 0) return [color(this.theme, "dim", "No models match the current query and filters.")];
     const labelWidth = Math.max(12, width - 31);
-    return models.slice(this.scrollTop, this.scrollTop + rows).map((item, offset) => {
-      const index = this.scrollTop + offset;
-      const marker = index === this.selectedIndex ? ">>" : "  ";
-      const label = `${item.providerId}/${item.model.id}`;
-      const row = `${marker} ${pad(label, labelWidth)} ${pad(freeLabel(item.model), 5)} ${pad(formatCompactNumber(item.model.contextWindow), 6)} ${pad(formatCompactNumber(item.model.maxTokens), 6)} ${pad(formatCost(item.model), 6)}`;
-      return index === this.selectedIndex ? color(this.theme, "accent", row) : row;
-    });
+    return this.renderModelRows(models, rows, labelWidth, (item, marker, label, lw) => `${marker} ${pad(label, lw)} ${pad(freeLabel(item.model), 5)} ${pad(formatCompactNumber(item.model.contextWindow), 6)} ${pad(formatCompactNumber(item.model.maxTokens), 6)} ${pad(formatCost(item.model), 6)}`);
   }
 
   private renderDetails(item: CatalogModel | undefined, width: number, maxRows: number): string[] {
@@ -593,18 +586,13 @@ class ModelCatalogModal {
     ].map((detail) => truncate(detail, width));
   }
 
-  private renderPageInfo(totalRows: number, rowsPerPage: number): string {
+  private renderPageInfo(totalRows: number, rowsPerPage: number, compact = false): string {
     const metrics = this.pageMetrics(totalRows, rowsPerPage);
-    return `Page ${metrics.page}/${metrics.pages} (${metrics.start}-${metrics.end} of ${totalRows})`;
-  }
-
-  private renderCompactPageInfo(totalRows: number, rowsPerPage: number): string {
-    const metrics = this.pageMetrics(totalRows, rowsPerPage);
-    return `P${metrics.page}/${metrics.pages}`;
+    return compact ? `P${metrics.page}/${metrics.pages}` : `Page ${metrics.page}/${metrics.pages} (${metrics.start}-${metrics.end} of ${totalRows})`;
   }
 
   private renderNarrowFooter(totalRows: number, rowsPerPage: number, frameWidth: number): string {
-    const page = this.renderCompactPageInfo(totalRows, rowsPerPage);
+    const page = this.renderPageInfo(totalRows, rowsPerPage, true);
     if (!this.showHelp) {
       return frameWidth < 56
         ? `${page} | [↑/↓] [/] Query [h] Help [q] Close`

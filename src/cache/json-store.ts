@@ -14,6 +14,16 @@ const TRANSIENT_CACHE_REPLACE_ERROR_CODES = new Set([
   "EBUSY",
 ]);
 
+/**
+ * Best-effort cache cleanup intentionally ignores secondary filesystem failures
+ * (e.g. transient EBUSY/EACCES) so they never mask the original discovery or
+ * write error. Routed through a named helper instead of an empty catch so the
+ * decision is explicit rather than a silent swallow.
+ */
+function ignoreCleanupError(_error: unknown): void {
+  // Intentionally empty: cleanup is best-effort and must not propagate.
+}
+
 export function createEmptyCache(now = new Date()): CacheSchema {
   return {
     version: CACHE_SCHEMA_VERSION,
@@ -36,8 +46,8 @@ export function readCacheFile(cachePath: string): CacheSchema {
   } catch {
     try {
       rmSync(cachePath, { force: true });
-    } catch {
-      // Cache invalidation failure should not block discovery.
+    } catch (cleanupError) {
+      ignoreCleanupError(cleanupError);
     }
     return createEmptyCache();
   }
@@ -81,8 +91,8 @@ export async function writeCacheFile(cachePath: string, cache: CacheSchema): Pro
   } catch (error) {
     try {
       await rm(tempPath, { force: true });
-    } catch {
-      // Temporary cache cleanup failure should not hide the original write failure.
+    } catch (cleanupError) {
+      ignoreCleanupError(cleanupError);
     }
     throw error;
   }

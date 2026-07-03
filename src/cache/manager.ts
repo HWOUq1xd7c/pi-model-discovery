@@ -26,20 +26,29 @@ function compatSupportsReasoningEffort(compat: DiscoveredModel["compat"] | undef
   return (compat as { supportsReasoningEffort?: unknown } | undefined)?.supportsReasoningEffort === true;
 }
 
-function hasLegacyOpenAIReasoningCompatGaps(providerId: string | undefined, entry: CacheEntry): boolean {
+function hasLegacyModelGap(
+  providerId: string | undefined,
+  entry: CacheEntry,
+  idPattern: RegExp,
+  hasGap: (model: DiscoveredModel) => boolean,
+): boolean {
   if (providerId === undefined) return false;
   return entry.models.some((model) => {
-    if (!/(^|\/)gpt-[5-9](?:[.\-]\d+)?(?:[.\-][\w.-]+)?(?:$|[:/])/i.test(model.id)) return false;
-    return model.reasoning !== true || !compatSupportsReasoningEffort(model.compat) || model.thinkingLevelMap?.minimal !== null || model.thinkingLevelMap?.xhigh !== "xhigh";
+    if (!idPattern.test(model.id)) return false;
+    return hasGap(model);
   });
 }
 
+function hasLegacyOpenAIReasoningCompatGaps(providerId: string | undefined, entry: CacheEntry): boolean {
+  return hasLegacyModelGap(providerId, entry, /(^|\/)gpt-[5-9](?:[.\-]\d+)?(?:[.\-][\w.-]+)?(?:$|[:/])/i, (model) => model.reasoning !== true || !compatSupportsReasoningEffort(model.compat) || model.thinkingLevelMap?.minimal !== null || model.thinkingLevelMap?.xhigh !== "xhigh");
+}
+
 function hasLegacyClaudeOpusThinkingLevelGaps(providerId: string | undefined, entry: CacheEntry): boolean {
-  if (providerId === undefined) return false;
-  return entry.models.some((model) => {
-    if (!/(^|\/)claude-opus-4-[678](?:$|[-:/])/i.test(model.id)) return false;
-    return model.reasoning !== true || model.thinkingLevelMap?.xhigh === undefined;
-  });
+  return hasLegacyModelGap(providerId, entry, /(^|\/)claude-opus-4-[678](?:$|[-:/])/i, (model) => model.reasoning !== true || model.thinkingLevelMap?.xhigh === undefined);
+}
+
+function hasLegacyGlm52ThinkingLevelGaps(providerId: string | undefined, entry: CacheEntry): boolean {
+  return hasLegacyModelGap(providerId, entry, /(^|\/)glm-5\.2(?:$|[-:/])/i, (model) => model.reasoning === true && model.thinkingLevelMap?.xhigh === undefined);
 }
 
 const LEGACY_CATALOG_CACHE_OVERLAY_PATTERN = /(^|\/)(?:gpt-[5-9]|claude-(?:haiku|opus|sonnet)-4|gemini-(?:2\.5|3)|grok-4|kimi-k2|mimo-v2|deepseek-v4|qwen3\.5|glm-4\.7|gpt-oss-120b)(?:$|[-.:/])/i;
@@ -62,6 +71,7 @@ export function isCacheEntryFresh(entry: CacheEntry, now = new Date(), providerI
   if (hasLegacyBlazeApiClaudeAnthropicOverrides(providerId, entry)) return false;
   if (hasLegacyOpenAIReasoningCompatGaps(providerId, entry)) return false;
   if (hasLegacyClaudeOpusThinkingLevelGaps(providerId, entry)) return false;
+  if (hasLegacyGlm52ThinkingLevelGaps(providerId, entry)) return false;
   if (hasLegacyCatalogCacheOverlay(entry)) return false;
   if (hasLegacyNonTextGenerationModels(entry)) return false;
   const fetchedAtMs = Date.parse(entry.fetchedAt);
@@ -122,21 +132,7 @@ export class CacheManager {
     await writeCacheFile(this.cachePath, cache);
   }
 
-  async pruneProviders(activeProviderIds: ReadonlySet<string>): Promise<string[]> {
-    const cache = this.read();
-    const removed: string[] = [];
-    for (const providerId of Object.keys(cache.providers)) {
-      if (activeProviderIds.has(providerId)) continue;
-      delete cache.providers[providerId];
-      removed.push(providerId);
-    }
-    if (removed.length > 0) await writeCacheFile(this.cachePath, cache);
-    return removed;
-  }
-
-  async pruneProviderIds(providerIds: ReadonlySet<string>): Promise<string[]> {
-    if (providerIds.size === 0) return [];
-    const cache = this.read();
+  private async deleteProviderIds(providerIds: readonly string[], cache: CacheSchema): Promise<string[]> {
     const removed: string[] = [];
     for (const providerId of providerIds) {
       if (!(providerId in cache.providers)) continue;
@@ -145,6 +141,18 @@ export class CacheManager {
     }
     if (removed.length > 0) await writeCacheFile(this.cachePath, cache);
     return removed;
+  }
+
+  async pruneProviders(activeProviderIds: ReadonlySet<string>): Promise<string[]> {
+    const cache = this.read();
+    const removable = Object.keys(cache.providers).filter((providerId) => !activeProviderIds.has(providerId));
+    return this.deleteProviderIds(removable, cache);
+  }
+
+  async pruneProviderIds(providerIds: ReadonlySet<string>): Promise<string[]> {
+    if (providerIds.size === 0) return [];
+    const cache = this.read();
+    return this.deleteProviderIds([...providerIds], cache);
   }
 
   async replaceAll(entries: Record<string, CacheEntry>, now = new Date()): Promise<void> {
