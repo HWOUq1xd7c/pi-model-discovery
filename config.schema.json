@@ -3,6 +3,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "enabled": { "type": "boolean", "default": true },
     "debug": { "type": "boolean", "default": false },
     "$comment": {
       "type": "string",

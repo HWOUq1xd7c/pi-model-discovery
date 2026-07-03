@@ -20,6 +20,7 @@ import type {
   RegistrationImportMode,
   RegistrationOwnershipConflictMode,
 } from "./types.js";
+import type { CredentialEntry } from "./types.js";
 
 const DEFAULT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -31,7 +32,14 @@ const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ENV_REF_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
 const SUPPORTED_AUTO_IMPORT_APIS = new Set(["openai-completions"]);
 const SUPPORTED_IMPORT_MODES: readonly RegistrationImportMode[] = ["replace", "merge", "sync"];
-const PI_MONO_SUPPORTED_PROVIDER_IDS = new Set([
+/**
+ * Static fallback of Pi-Mono-managed built-in provider IDs. Used only when no
+ * dynamic `builtinProviderIds` set is supplied to the loader (e.g. the
+ * standalone verifier CLI has no model registry). Runtime callers inject the
+ * live set from `pi.modelRegistry.getAll()` so this list never has to track
+ * upstream renames or additions by hand.
+ */
+const PI_MONO_BUILTIN_PROVIDER_FALLBACK_IDS = new Set([
   "amazon-bedrock",
   "anthropic",
   "azure-openai-responses",
@@ -64,11 +72,7 @@ const PI_MONO_SUPPORTED_PROVIDER_IDS = new Set([
   "xiaomi-token-plan-sgp",
   "zai",
 ]);
-const PI_MULTI_AUTH_BUILT_IN_PROVIDER_IDS = new Set([
-  ...PI_MONO_SUPPORTED_PROVIDER_IDS,
-  "cloudflare",
-  "qwen",
-]);
+const PI_MULTI_AUTH_EXTRA_PROVIDER_IDS = new Set(["cloudflare", "qwen"]);
 const PUBLIC_DISCOVERY_API_KEY = "pi-model-discovery-public";
 
 interface LoaderPaths {
@@ -77,6 +81,13 @@ interface LoaderPaths {
   modelsJsonPath?: string;
   authJsonPath?: string;
   multiAuthJsonPath?: string;
+  /**
+   * Pi-Mono-managed built-in provider IDs discovered dynamically at runtime
+   * (e.g. from `pi.modelRegistry.getAll()`). When supplied, this replaces the
+   * static fallback set so auto-import skip decisions and stale-cache pruning
+   * reflect the live built-in catalog instead of a hardcoded list.
+   */
+  builtinProviderIds?: ReadonlySet<string>;
 }
 
 function readJsonFile(path: string): unknown {
@@ -120,14 +131,24 @@ function resolveAgentJsonPath(extensionRoot: string, fileName: "models.json" | "
   return join(resolveAgentDir(extensionRoot), fileName);
 }
 
+/** Validate that {@link value} is a record, pushing a warning and returning undefined otherwise. */
+function readOptionalRecord(value: unknown, warnings: string[], label: string): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (isRecord(value)) return value;
+  warnings.push(`${label} must be an object; ignoring it.`);
+  return undefined;
+}
+
+function withOptionalRecord<T>(value: unknown, warnings: string[], label: string, fn: (record: Record<string, unknown>) => T | undefined): T | undefined {
+  const record = readOptionalRecord(value, warnings, label);
+  return record ? fn(record) : undefined;
+}
+
 function toStringRecord(value: unknown, warnings: string[], label: string): Record<string, string> {
-  if (value === undefined) return {};
-  if (!isRecord(value)) {
-    warnings.push(`${label} must be an object; ignoring it.`);
-    return {};
-  }
+  const record = readOptionalRecord(value, warnings, label);
+  if (!record) return {};
   const result: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(value)) {
+  for (const [key, rawValue] of Object.entries(record)) {
     if (typeof rawValue === "string") {
       result[key] = rawValue;
     } else {
@@ -349,18 +370,13 @@ function loadExternalStaticProviderIdsFromExtensions(extensionRoot: string, warn
   return Array.from(new Set(providerIds));
 }
 
-function toPositiveInteger(value: unknown, fallback: number, warnings: string[], label: string): number {
+function toPositiveInteger(value: unknown, warnings: string[], label: string): number | undefined;
+function toPositiveInteger(value: unknown, warnings: string[], label: string, fallback: number): number;
+function toPositiveInteger(value: unknown, warnings: string[], label: string, fallback?: number): number | undefined {
   if (value === undefined) return fallback;
   if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  warnings.push(`${label} must be a positive integer; using ${fallback}.`);
+  warnings.push(`${label} must be a positive integer; ${fallback === undefined ? "ignoring it" : `using ${fallback}`}.`);
   return fallback;
-}
-
-function toOptionalPositiveInteger(value: unknown, warnings: string[], label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  warnings.push(`${label} must be a positive integer; ignoring it.`);
-  return undefined;
 }
 
 function resolveEnvValue(value: string | undefined, warnings: string[], label: string): string | undefined {
@@ -389,16 +405,13 @@ function resolveEnvRecord(record: Record<string, string>, warnings: string[], la
 const THINKING_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 function normalizeCapabilities(value: unknown, warnings: string[], label: string): DiscoveryDefaults["capabilities"] | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) {
-    warnings.push(`${label} must be an object; ignoring it.`);
-    return undefined;
-  }
-  const normalized: NonNullable<DiscoveryDefaults["capabilities"]> = {};
-  for (const [key, rawValue] of Object.entries(value)) {
-    if (typeof rawValue === "boolean") normalized[key] = rawValue;
-  }
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
+  return withOptionalRecord(value, warnings, label, (record) => {
+    const normalized: NonNullable<DiscoveryDefaults["capabilities"]> = {};
+    for (const [key, rawValue] of Object.entries(record)) {
+      if (typeof rawValue === "boolean") normalized[key] = rawValue;
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  });
 }
 
 function normalizeThinkingLevelMap(
@@ -406,54 +419,47 @@ function normalizeThinkingLevelMap(
   warnings: string[],
   label: string,
 ): DiscoveryDefaults["thinkingLevelMap"] | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) {
-    warnings.push(`${label} must be an object; ignoring it.`);
-    return undefined;
-  }
+  return withOptionalRecord(value, warnings, label, (record) => {
+    const normalized: NonNullable<DiscoveryDefaults["thinkingLevelMap"]> = {};
+    let hasEntries = false;
 
-  const normalized: NonNullable<DiscoveryDefaults["thinkingLevelMap"]> = {};
-  let hasEntries = false;
-
-  for (const key of THINKING_LEVEL_KEYS) {
-    const mapped = value[key];
-    if (typeof mapped === "string" || mapped === null) {
-      normalized[key] = mapped;
-      hasEntries = true;
+    for (const key of THINKING_LEVEL_KEYS) {
+      const mapped = record[key];
+      if (typeof mapped === "string" || mapped === null) {
+        normalized[key] = mapped;
+        hasEntries = true;
+      }
     }
-  }
 
-  return hasEntries ? normalized : undefined;
+    return hasEntries ? normalized : undefined;
+  });
 }
 
 function normalizeDefaults(value: unknown, warnings: string[], label: string): DiscoveryDefaults {
-  if (value === undefined) return {};
-  if (!isRecord(value)) {
-    warnings.push(`${label} must be an object; ignoring it.`);
-    return {};
-  }
+  const record = readOptionalRecord(value, warnings, label);
+  if (!record) return {};
 
   const defaults: DiscoveryDefaults = {};
-  if (typeof value.baseUrl === "string" && value.baseUrl.trim()) defaults.baseUrl = value.baseUrl.trim();
-  if (typeof value.reasoning === "boolean") defaults.reasoning = value.reasoning;
-  const thinkingLevelMap = normalizeThinkingLevelMap(value.thinkingLevelMap, warnings, `${label}.thinkingLevelMap`);
+  if (typeof record.baseUrl === "string" && record.baseUrl.trim()) defaults.baseUrl = record.baseUrl.trim();
+  if (typeof record.reasoning === "boolean") defaults.reasoning = record.reasoning;
+  const thinkingLevelMap = normalizeThinkingLevelMap(record.thinkingLevelMap, warnings, `${label}.thinkingLevelMap`);
   if (thinkingLevelMap) defaults.thinkingLevelMap = thinkingLevelMap;
-  const input = normalizeInput(value.input);
+  const input = normalizeInput(record.input);
   if (input) defaults.input = input;
-  const output = normalizeOutput(value.output);
+  const output = normalizeOutput(record.output);
   if (output) defaults.output = output;
-  const capabilities = normalizeCapabilities(value.capabilities, warnings, `${label}.capabilities`);
+  const capabilities = normalizeCapabilities(record.capabilities, warnings, `${label}.capabilities`);
   if (capabilities) defaults.capabilities = capabilities;
-  if (isRecord(value.cost)) {
+  if (isRecord(record.cost)) {
     defaults.cost = {};
     for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
-      const costValue = value.cost[key];
+      const costValue = record.cost[key];
       if (typeof costValue === "number" && Number.isFinite(costValue)) defaults.cost[key] = costValue;
     }
   }
-  if (typeof value.contextWindow === "number" && Number.isFinite(value.contextWindow)) defaults.contextWindow = value.contextWindow;
-  if (typeof value.maxTokens === "number" && Number.isFinite(value.maxTokens)) defaults.maxTokens = value.maxTokens;
-  if (isRecord(value.compat)) defaults.compat = value.compat as DiscoveryDefaults["compat"];
+  if (typeof record.contextWindow === "number" && Number.isFinite(record.contextWindow)) defaults.contextWindow = record.contextWindow;
+  if (typeof record.maxTokens === "number" && Number.isFinite(record.maxTokens)) defaults.maxTokens = record.maxTokens;
+  if (isRecord(record.compat)) defaults.compat = record.compat as DiscoveryDefaults["compat"];
   return defaults;
 }
 
@@ -484,9 +490,9 @@ function loadExistingProviderIds(modelsJsonPath: string, warnings: string[]): Se
   }
 }
 
-function resolvePiMultiAuthManagedProviderIds(modelsRoot: unknown, authRoot: unknown, existingProviderIds: ReadonlySet<string>): Set<string> {
+function resolvePiMultiAuthManagedProviderIds(builtinProviderIds: ReadonlySet<string>, modelsRoot: unknown, authRoot: unknown, existingProviderIds: ReadonlySet<string>): Set<string> {
   return new Set([
-    ...PI_MULTI_AUTH_BUILT_IN_PROVIDER_IDS,
+    ...resolveMultiAuthManagedProviderIds(builtinProviderIds),
     ...existingProviderIds,
     ...readProviderIdsFromModelsRoot(modelsRoot),
     ...readProviderIdsFromAuthRoot(authRoot),
@@ -494,17 +500,14 @@ function resolvePiMultiAuthManagedProviderIds(modelsRoot: unknown, authRoot: unk
 }
 
 function normalizeDiscoveryPagination(value: unknown, warnings: string[], label: string): DiscoveryPaginationConfig | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) {
-    warnings.push(`${label} must be an object; ignoring it.`);
-    return undefined;
-  }
-  if (value.enabled === false) return undefined;
+  const record = readOptionalRecord(value, warnings, label);
+  if (!record) return undefined;
+  if (record.enabled === false) return undefined;
 
-  const cursorParam = typeof value.cursorParam === "string" && value.cursorParam.trim() ? value.cursorParam.trim() : "after";
-  const nextCursorField = typeof value.nextCursorField === "string" && value.nextCursorField.trim() ? value.nextCursorField.trim() : "next_page";
-  const hasMoreField = typeof value.hasMoreField === "string" && value.hasMoreField.trim() ? value.hasMoreField.trim() : "has_more";
-  const requestedMaxPages = value.maxPages === undefined ? undefined : toPositiveInteger(value.maxPages, MAX_PAGINATION_PAGES, warnings, `${label}.maxPages`);
+  const cursorParam = typeof record.cursorParam === "string" && record.cursorParam.trim() ? record.cursorParam.trim() : "after";
+  const nextCursorField = typeof record.nextCursorField === "string" && record.nextCursorField.trim() ? record.nextCursorField.trim() : "next_page";
+  const hasMoreField = typeof record.hasMoreField === "string" && record.hasMoreField.trim() ? record.hasMoreField.trim() : "has_more";
+  const requestedMaxPages = record.maxPages === undefined ? undefined : toPositiveInteger(record.maxPages, warnings, `${label}.maxPages`, MAX_PAGINATION_PAGES);
   const maxPages = requestedMaxPages !== undefined && requestedMaxPages > MAX_PAGINATION_PAGES ? MAX_PAGINATION_PAGES : requestedMaxPages;
   if (requestedMaxPages !== undefined && requestedMaxPages > MAX_PAGINATION_PAGES) {
     warnings.push(`${label}.maxPages must be ${MAX_PAGINATION_PAGES} or lower; using ${MAX_PAGINATION_PAGES}.`);
@@ -545,8 +548,8 @@ function normalizeProviderDiscovery(
     enabled: discoveryRaw.enabled !== false,
     endpointPath: endpointPath.value,
     headers: discoveryHeaders,
-    timeoutMs: toPositiveInteger(discoveryRaw.timeoutMs, DEFAULT_TIMEOUT_MS, warnings, `${label}.discovery.timeoutMs`),
-    ttlMs: discoveryRaw.ttlMs === undefined ? defaultCacheTtl : toPositiveInteger(discoveryRaw.ttlMs, defaultCacheTtl, warnings, `${label}.discovery.ttlMs`),
+    timeoutMs: toPositiveInteger(discoveryRaw.timeoutMs, warnings, `${label}.discovery.timeoutMs`, DEFAULT_TIMEOUT_MS),
+    ttlMs: discoveryRaw.ttlMs === undefined ? defaultCacheTtl : toPositiveInteger(discoveryRaw.ttlMs, warnings, `${label}.discovery.ttlMs`, defaultCacheTtl),
     includeDetails: discoveryRaw.includeDetails === true,
     allowModels: toStringArray(discoveryRaw.allowModels, warnings, `${label}.discovery.allowModels`),
     blockModels: toStringArray(discoveryRaw.blockModels, warnings, `${label}.discovery.blockModels`),
@@ -638,7 +641,7 @@ function normalizeProvider(
     api: api as ProviderConfigEntry["api"],
     authHeader,
     headers,
-    maxModels: rawProvider.maxModels === undefined ? globalMaxModels : toOptionalPositiveInteger(rawProvider.maxModels, warnings, `${label}.maxModels`),
+    maxModels: rawProvider.maxModels === undefined ? globalMaxModels : toPositiveInteger(rawProvider.maxModels, warnings, `${label}.maxModels`),
     discovery,
     defaults: normalizeDefaults(rawProvider.defaults, warnings, `${label}.defaults`),
     modelDefaults: readExplicitModelDefaults(rawProvider.modelDefaults, warnings, `${label}.modelDefaults`),
@@ -677,8 +680,8 @@ function normalizeAutoImport(
     discovery: {
       enabled: discoveryRaw.enabled !== false,
       headers: toStringRecord(discoveryRaw.headers, warnings, "autoImport.discovery.headers"),
-      timeoutMs: toPositiveInteger(discoveryRaw.timeoutMs, DEFAULT_TIMEOUT_MS, warnings, "autoImport.discovery.timeoutMs"),
-      ttlMs: discoveryRaw.ttlMs === undefined ? defaultCacheTtl : toPositiveInteger(discoveryRaw.ttlMs, defaultCacheTtl, warnings, "autoImport.discovery.ttlMs"),
+      timeoutMs: toPositiveInteger(discoveryRaw.timeoutMs, warnings, "autoImport.discovery.timeoutMs", DEFAULT_TIMEOUT_MS),
+      ttlMs: discoveryRaw.ttlMs === undefined ? defaultCacheTtl : toPositiveInteger(discoveryRaw.ttlMs, warnings, "autoImport.discovery.ttlMs", defaultCacheTtl),
       includeDetails: discoveryRaw.includeDetails === true,
       typeByProvider: toDiscoveryTypeRecord(discoveryRaw.typeByProvider, warnings, "autoImport.discovery.typeByProvider"),
       endpointPathByProvider: toEndpointPathRecord(discoveryRaw.endpointPathByProvider, warnings, "autoImport.discovery.endpointPathByProvider"),
@@ -798,6 +801,41 @@ function sanitizeImportedHeaders(headers: Record<string, string>, warnings: stri
   return sanitized;
 }
 
+/**
+ * Resolve the full credential pool available to a provider for rotation. Walks
+ * every ordered candidate id, resolves its API-key credential, and deduplicates
+ * by key value. The primary credential (the one already selected for
+ * `provider.apiKey`) is always first; remaining distinct keys follow in candidate
+ * order so a verifier can rotate on retryable failures. Public/anonymous and
+ * OAuth credentials are excluded (OAuth is not approved for verifier probes).
+ * Returns `undefined` when only the primary key is available, so single-key
+ * providers pay no pool overhead.
+ */
+function resolveCredentialPool(
+  authRoot: unknown,
+  orderedCredentialProviderIds: readonly string[],
+  autoImport: AutoImportConfig,
+  profile: BuiltInProviderProfile | undefined,
+  primary: AutoImportCredential,
+): CredentialEntry[] | undefined {
+  if (primary.kind === "public" || primary.kind === "oauth") return undefined;
+  const pool: CredentialEntry[] = [];
+  const seen = new Set<string>();
+  const add = (credential: AutoImportCredential, sourceId: string): void => {
+    if (credential.kind !== "api_key") return;
+    if (seen.has(credential.apiKey)) return;
+    seen.add(credential.apiKey);
+    pool.push({ apiKey: credential.apiKey, authHeader: credential.authHeader, headers: credential.headers, sourceId });
+  };
+  add(primary, orderedCredentialProviderIds[0] ?? "");
+  for (const candidateId of orderedCredentialProviderIds) {
+    const localWarnings: string[] = [];
+    const credential = resolveAutoImportCredential(authRoot, candidateId, { autoImport, profile, warnings: localWarnings, options: { requireAuthJsonCredential: false } });
+    if (credential) add(credential, candidateId);
+  }
+  return pool.length > 1 ? pool : undefined;
+}
+
 function readCredentialRequestOverrides(authRoot: unknown, providerId: string, warnings: string[]): Pick<AutoImportCredential, "baseUrl" | "headers"> {
   if (!isRecord(authRoot)) return {};
   const credential = authRoot[providerId];
@@ -823,14 +861,19 @@ function readCredentialRequestOverrides(authRoot: unknown, providerId: string, w
   return overrides;
 }
 
+interface AutoImportCredentialContext {
+  autoImport: AutoImportConfig;
+  profile: BuiltInProviderProfile | undefined;
+  warnings: string[];
+  options: { requireAuthJsonCredential: boolean };
+}
+
 function resolveAutoImportCredential(
   authRoot: unknown,
   providerId: string,
-  autoImport: AutoImportConfig,
-  profile: BuiltInProviderProfile | undefined,
-  warnings: string[],
-  options: { requireAuthJsonCredential: boolean },
+  context: AutoImportCredentialContext,
 ): AutoImportCredential | undefined {
+  const { autoImport, profile, warnings, options } = context;
   const requestOverrides = readCredentialRequestOverrides(authRoot, providerId, warnings);
   const authCredential = readAuthCredential(authRoot, providerId, warnings);
   const envCredential = readProfileEnvCredential(profile);
@@ -923,20 +966,20 @@ function readProfileEnvCredential(profile: BuiltInProviderProfile | undefined): 
   return undefined;
 }
 
-function readProviderIdsFromProfileEnv(): Set<string> {
+function filterBuiltInProfileIds(predicate: (profile: BuiltInProviderProfile | undefined, providerId: string) => boolean): Set<string> {
   const providerIds = new Set<string>();
   for (const providerId of listBuiltInProviderProfileIds()) {
-    if (readProfileEnvCredential(getBuiltInProviderProfile(providerId))) providerIds.add(providerId);
+    if (predicate(getBuiltInProviderProfile(providerId), providerId)) providerIds.add(providerId);
   }
   return providerIds;
 }
 
+function readProviderIdsFromProfileEnv(): Set<string> {
+  return filterBuiltInProfileIds((profile) => Boolean(readProfileEnvCredential(profile)));
+}
+
 function readPublicProfileProviderIds(): Set<string> {
-  const providerIds = new Set<string>();
-  for (const providerId of listBuiltInProviderProfileIds()) {
-    if (getBuiltInProviderProfile(providerId)?.supportsPublicDiscovery === true) providerIds.add(providerId);
-  }
-  return providerIds;
+  return filterBuiltInProfileIds((profile) => profile?.supportsPublicDiscovery === true);
 }
 
 function builtInProfileAllowsAutoImportCredential(profile: BuiltInProviderProfile | undefined, credentialKind: BuiltInCredentialKind | "public"): boolean {
@@ -1049,15 +1092,13 @@ function resolveAutoImportCredentialFromCandidates(
   authRoot: unknown,
   providerId: string,
   credentialProviderIds: readonly string[],
-  autoImport: AutoImportConfig,
-  profile: BuiltInProviderProfile | undefined,
-  warnings: string[],
-  options: { requireAuthJsonCredential: boolean },
+  context: AutoImportCredentialContext,
 ): AutoImportCredential | undefined {
+  const { autoImport, profile, options, warnings } = context;
   let firstFailureWarnings: string[] = [];
   for (const credentialProviderId of credentialProviderIds) {
     const localWarnings: string[] = [];
-    const credential = resolveAutoImportCredential(authRoot, credentialProviderId, autoImport, profile, localWarnings, options);
+    const credential = resolveAutoImportCredential(authRoot, credentialProviderId, { autoImport, profile, warnings: localWarnings, options });
     if (credential) {
       warnings.push(...localWarnings);
       return credential;
@@ -1068,7 +1109,7 @@ function resolveAutoImportCredentialFromCandidates(
   return undefined;
 }
 
-function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels: number | undefined, authRoot: unknown, modelsRoot: unknown, warnings: string[]): ProviderConfigEntry[] {
+function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels: number | undefined, authRoot: unknown, modelsRoot: unknown, builtinProviderIds: ReadonlySet<string>, warnings: string[]): ProviderConfigEntry[] {
   if (!autoImport.enabled) return [];
   const modelProviderEntries = readModelsProviderEntries(modelsRoot, warnings);
   const candidateProviderIds = new Set([
@@ -1082,7 +1123,7 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
   const providers: ProviderConfigEntry[] = [];
   for (const group of candidateGroups) {
     const providerId = group.providerId;
-    if (PI_MONO_SUPPORTED_PROVIDER_IDS.has(providerId) && readFirstAuthCredentialKind(authRoot, group.credentialProviderIds)) {
+    if (builtinProviderIds.has(providerId) && readFirstAuthCredentialKind(authRoot, group.credentialProviderIds)) {
       warnings.push(`Auto-import skipped provider '${providerId}': user credential is managed by Pi Mono; pi-model-discovery will not duplicate ownership.`);
       continue;
     }
@@ -1111,9 +1152,7 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
     }
 
     const orderedCredentialProviderIds = orderCredentialProviderIds(providerId, group.credentialProviderIds, authRoot, provider, profile);
-    const credential = resolveAutoImportCredentialFromCandidates(authRoot, providerId, orderedCredentialProviderIds, autoImport, profile, warnings, {
-      requireAuthJsonCredential: hasModelsMetadata,
-    });
+    const credential = resolveAutoImportCredentialFromCandidates(authRoot, providerId, orderedCredentialProviderIds, { autoImport, profile, warnings, options: { requireAuthJsonCredential: hasModelsMetadata } });
     if (!credential) continue;
     if (!hasModelsMetadata && profile && !builtInProfileAllowsAutoImportCredential(profile, credential.kind)) {
       if (credential.kind === "public") {
@@ -1123,6 +1162,8 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
       }
       continue;
     }
+
+    const credentialPool = resolveCredentialPool(authRoot, orderedCredentialProviderIds, autoImport, profile, credential);
 
     const rawBaseUrl = credential.baseUrl ?? (typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : undefined) ?? inferProfileBaseUrl(profile) ?? "";
     if (!rawBaseUrl) {
@@ -1169,6 +1210,7 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
       modelDefaults: readModelDefaults(provider.models, warnings, inheritedFromProviderId ?? providerId),
       fallbackModelIds,
       source: "auto-import",
+      credentials: credentialPool,
     });
   }
   return providers;
@@ -1205,6 +1247,24 @@ function formatSupportedImportModes(): string {
   return SUPPORTED_IMPORT_MODES.join(", ");
 }
 
+/**
+ * Resolve the Pi-Mono-managed built-in provider IDs. Prefers a dynamically
+ * injected set (from the runtime model registry) so rename/addition tracking
+ * is automatic; falls back to the static catalog only when no dynamic set is
+ * available (e.g. the standalone verifier CLI).
+ */
+function resolveBuiltinProviderIds(injected?: ReadonlySet<string>): ReadonlySet<string> {
+  return injected && injected.size > 0 ? injected : PI_MONO_BUILTIN_PROVIDER_FALLBACK_IDS;
+}
+
+/**
+ * Resolve the broader pi-multi-auth-managed provider set (built-ins plus the
+ * legacy alias ids cloudflare/qwen that pi-multi-auth owns).
+ */
+function resolveMultiAuthManagedProviderIds(builtinProviderIds: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set([...builtinProviderIds, ...PI_MULTI_AUTH_EXTRA_PROVIDER_IDS]);
+}
+
 function normalizeRegistrationOwnershipConflictMode(value: unknown, warnings: string[]): RegistrationOwnershipConflictMode {
   if (value === undefined) return "merge";
   if (value === "merge" || value === "skip") return value;
@@ -1222,6 +1282,7 @@ export function loadConfig(paths: LoaderPaths): ConfigLoadResult {
 
 function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: HiddenProviderResolution): ConfigLoadResult {
   const warnings: string[] = [];
+  const builtinProviderIds = resolveBuiltinProviderIds(paths.builtinProviderIds);
   const configPath = paths.configPath ?? join(paths.extensionRoot, "config.json");
   const configDir = dirname(configPath);
   const defaultModelsJsonPath = paths.modelsJsonPath ?? resolveAgentJsonPath(paths.extensionRoot, "models.json");
@@ -1242,8 +1303,9 @@ function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: Hidde
 
   const raw = isRecord(rawConfig) ? rawConfig : {};
   const debug = raw.debug === true;
-  const cacheTTL = toPositiveInteger(raw.cacheTTL, DEFAULT_CACHE_TTL_MS, warnings, "cacheTTL");
-  const maxModels = toOptionalPositiveInteger(raw.maxModels, warnings, "maxModels");
+  const enabled = raw.enabled !== false;
+  const cacheTTL = toPositiveInteger(raw.cacheTTL, warnings, "cacheTTL", DEFAULT_CACHE_TTL_MS);
+  const maxModels = toPositiveInteger(raw.maxModels, warnings, "maxModels");
   const modelsDevRaw = isRecord(raw.modelsDev) ? raw.modelsDev : {};
   const openRouterRaw = isRecord(raw.openRouter) ? raw.openRouter : {};
   const existingProviderIds = loadExistingProviderIds(defaultModelsJsonPath, warnings);
@@ -1275,11 +1337,12 @@ function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: Hidde
 
   const modelsRoot = autoImport.enabled ? readOptionalJson(autoImport.modelsJsonPath, warnings, "models.json") : undefined;
   const authRoot = autoImport.enabled ? readOptionalJson(autoImport.authJsonPath, warnings, "auth.json") : undefined;
-  const autoProviders = autoImport.enabled ? loadAutoImportedProviders(autoImport, maxModels, authRoot ?? {}, modelsRoot, warnings) : [];
+  const autoProviders = autoImport.enabled ? loadAutoImportedProviders(autoImport, maxModels, authRoot ?? {}, modelsRoot, builtinProviderIds, warnings) : [];
   const registrationOwnershipRaw = isRecord(raw.registrationOwnership) ? raw.registrationOwnership : {};
 
   const cacheFile = typeof raw.cacheFile === "string" && raw.cacheFile.trim() ? resolve(configDir, raw.cacheFile) : cacheFileDefault;
   const config: ExtensionConfig = {
+    enabled,
     debug,
     cacheTTL,
     cacheFile,
@@ -1287,18 +1350,18 @@ function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: Hidde
     modelsDev: {
       enabled: modelsDevRaw.enabled !== false,
       url: normalizeModelsDevUrl(modelsDevRaw.url, warnings),
-      timeoutMs: toPositiveInteger(modelsDevRaw.timeoutMs, DEFAULT_CATALOG_TIMEOUT_MS, warnings, "modelsDev.timeoutMs"),
+      timeoutMs: toPositiveInteger(modelsDevRaw.timeoutMs, warnings, "modelsDev.timeoutMs", DEFAULT_CATALOG_TIMEOUT_MS),
     },
     openRouter: {
       enabled: openRouterRaw.enabled !== false,
       url: normalizeOpenRouterUrl(openRouterRaw.url, warnings),
-      timeoutMs: toPositiveInteger(openRouterRaw.timeoutMs, DEFAULT_OPENROUTER_TIMEOUT_MS, warnings, "openRouter.timeoutMs"),
+      timeoutMs: toPositiveInteger(openRouterRaw.timeoutMs, warnings, "openRouter.timeoutMs", DEFAULT_OPENROUTER_TIMEOUT_MS),
     },
     autoImport,
     providers: mergeProviders(autoProviders, explicitProviders, warnings),
     registration: normalizeRegistrationConfig(raw.registration, warnings),
     registrationOwnership: {
-      managedProviderIds: resolvePiMultiAuthManagedProviderIds(modelsRoot, authRoot, existingProviderIds),
+      managedProviderIds: resolvePiMultiAuthManagedProviderIds(builtinProviderIds, modelsRoot, authRoot, existingProviderIds),
       manager: "pi-multi-auth",
       onConflict: normalizeRegistrationOwnershipConflictMode(registrationOwnershipRaw.onConflict, warnings),
     },

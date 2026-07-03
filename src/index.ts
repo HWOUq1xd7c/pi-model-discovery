@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +31,7 @@ type ResourcesDiscoverHandler = (event: ResourcesDiscoverEvent, ctx: ExtensionCo
 interface BootstrapRequest {
   trigger: string;
   forceRegistration?: boolean;
+  builtinProviderIds?: ReadonlySet<string>;
 }
 
 interface BootstrapRuntimeState {
@@ -173,9 +174,7 @@ function mergeWithStaticModels(provider: ProviderConfigEntry, models: Discovered
   for (const staticRawModel of staticRawModels) {
     const existing = mergedById.get(staticRawModel.id);
     if (existing) {
-      const withModelDefaults = provider.source === "auto-import"
-        ? existing
-        : applyModelDefaults(existing, provider.modelDefaults[staticRawModel.id], "modelsJsonDefaults");
+      const withModelDefaults = applyModelDefaults(existing, provider.modelDefaults[staticRawModel.id], "modelsJsonDefaults");
       mergedById.set(staticRawModel.id, applyModelDefaults(withModelDefaults, provider.defaults, "providerDefaults"));
       continue;
     }
@@ -364,14 +363,43 @@ function deferBackgroundRefresh(refresh: () => Promise<void>): Promise<void> {
   });
 }
 
+/**
+ * Collect Pi-Mono-managed built-in provider IDs dynamically from the runtime
+ * model registry. This replaces a hardcoded provider list so stale-cache
+ * pruning and auto-import skip decisions track upstream renames and additions
+ * automatically. Returns an empty set (driving the static fallback) when the
+ * registry is unavailable.
+ */
+function extractBuiltinProviderIds(registry: { getAll?(): ReadonlyArray<{ provider: string }> } | undefined): ReadonlySet<string> {
+  try {
+    const models = registry?.getAll?.() ?? [];
+    const ids = new Set<string>();
+    for (const model of models) {
+      if (typeof model.provider === "string" && model.provider) ids.add(model.provider);
+    }
+    return ids;
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function collectBuiltinProviderIds(pi: ExtensionAPI): ReadonlySet<string> {
+  return extractBuiltinProviderIds((pi as unknown as { modelRegistry?: { getAll?(): ReadonlyArray<{ provider: string }> } }).modelRegistry);
+}
+
+function collectBuiltinProviderIdsFromContext(ctx: ExtensionContext): ReadonlySet<string> {
+  return extractBuiltinProviderIds(ctx.modelRegistry);
+}
+
 async function bootstrap(
   pi: ExtensionAPI,
   registrar: ModelRegistrar,
   trigger: string,
   runtime: BootstrapRuntimeState,
-  options: { forceRegistration?: boolean } = {},
+  options: { forceRegistration?: boolean; builtinProviderIds?: ReadonlySet<string> } = {},
 ): Promise<void> {
-  const { config, warnings } = await loadConfigAsync({ extensionRoot: EXTENSION_ROOT });
+  const builtinProviderIds = options.builtinProviderIds ?? collectBuiltinProviderIds(pi);
+  const { config, warnings } = await loadConfigAsync({ extensionRoot: EXTENSION_ROOT, builtinProviderIds });
   const logger = new DebugLogger({ extensionRoot: EXTENSION_ROOT, debug: config.debug });
   const startupPolicy = resolveModelDiscoveryStartupPolicy();
   for (const warning of warnings) {
@@ -454,13 +482,14 @@ function scheduleBootstrap(
   registrar: ModelRegistrar,
   runtime: BootstrapRuntimeState,
   trigger: string,
-  options: { forceRegistration?: boolean } = {},
+  options: { forceRegistration?: boolean; builtinProviderIds?: ReadonlySet<string> } = {},
 ): void {
   if (runtime.bootstrap) {
     if (shouldQueueBootstrap(trigger, options)) {
       runtime.pending = {
         trigger,
         forceRegistration: runtime.pending?.forceRegistration === true || options.forceRegistration === true,
+        builtinProviderIds: options.builtinProviderIds ?? runtime.pending?.builtinProviderIds,
       };
     }
     return;
@@ -477,12 +506,34 @@ function scheduleBootstrap(
       if (pending) {
         scheduleBootstrap(pi, registrar, runtime, pending.trigger, {
           forceRegistration: pending.forceRegistration,
+          builtinProviderIds: pending.builtinProviderIds,
         });
       }
     });
 }
 
+function isModelDiscoveryEnabled(): boolean {
+  const configPath = join(EXTENSION_ROOT, "config.json");
+  if (!existsSync(configPath)) {
+    return true;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return true;
+    }
+    return (parsed as Record<string, unknown>).enabled !== false;
+  } catch {
+    return true;
+  }
+}
+
 export default function modelDiscoveryExtension(pi: ExtensionAPI): void {
+  if (!isModelDiscoveryEnabled()) {
+    return;
+  }
+
   const registrar = new ModelRegistrar(pi);
   const runtime: BootstrapRuntimeState = {};
 
@@ -492,8 +543,8 @@ export default function modelDiscoveryExtension(pi: ExtensionAPI): void {
     scheduleBootstrap(pi, registrar, runtime, PI_MULTI_AUTH_PROVIDERS_REGISTERED_EVENT, { forceRegistration: true });
   });
 
-  pi.on("session_start", (_event, _ctx) => {
-    scheduleBootstrap(pi, registrar, runtime, "session_start");
+  pi.on("session_start", (_event, ctx) => {
+    scheduleBootstrap(pi, registrar, runtime, "session_start", { builtinProviderIds: collectBuiltinProviderIdsFromContext(ctx) });
   });
 
   onResourcesDiscover(pi, (event) => {

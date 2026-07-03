@@ -55,6 +55,18 @@ export interface ProviderDiscoveryConfig {
   pagination?: DiscoveryPaginationConfig;
 }
 
+/**
+ * A resolved credential usable for provider discovery or verifier probes.
+ * Mirrors the resolved shape produced by the auto-import credential resolver.
+ */
+export interface CredentialEntry {
+  apiKey: string;
+  authHeader: boolean;
+  headers?: Record<string, string>;
+  /** Credential-provider id this key was resolved from (for rotation logging). */
+  sourceId?: string;
+}
+
 export interface ProviderConfigEntry {
   id: string;
   baseUrl: string;
@@ -68,6 +80,13 @@ export interface ProviderConfigEntry {
   modelDefaults: Record<string, ModelDefaults>;
   fallbackModelIds?: string[];
   source: "explicit" | "auto-import";
+  /**
+   * Alternative credentials grouped under this provider during auto-import
+   * (e.g. numbered aliases `provider-1` … `provider-N`). `apiKey` is always the
+   * first entry; consumers that support rotation try remaining entries on
+   * retryable probe failures. Optional and empty for explicit providers.
+   */
+  credentials?: CredentialEntry[];
 }
 
 export interface ModelsDevConfig {
@@ -114,6 +133,7 @@ export interface RegistrationOwnershipConfig {
 }
 
 export interface ExtensionConfig {
+  enabled: boolean;
   debug: boolean;
   cacheTTL: number;
   cacheFile: string;
