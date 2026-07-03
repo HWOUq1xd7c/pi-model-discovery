@@ -7,29 +7,37 @@ const jiti = createJiti(import.meta.url);
 
 const extPath = path.resolve(__dirname, "./index.ts");
 
+const noop = () => {};
+
+// No-op runtime/api methods shared by both mocks; spread into each object so the
+// identical method list is defined once instead of copy-pasted.
+const sharedNoopMethods = {
+  sendMessage: noop,
+  sendUserMessage: noop,
+  appendEntry: noop,
+  setSessionName: noop,
+  getSessionName: noop,
+  setLabel: noop,
+  getActiveTools: noop,
+  getAllTools: noop,
+  setActiveTools: noop,
+  getCommands: noop,
+  setModel: noop,
+  getThinkingLevel: noop,
+  setThinkingLevel: noop,
+};
+
 const runtime = {
   pendingProviderRegistrations: [],
   registerProvider(name, config, extPath) {
     this.pendingProviderRegistrations.push({ name, config, extPath });
   },
-  unregisterProvider() {},
-  assertActive() {},
-  sendMessage() {},
-  sendUserMessage() {},
-  appendEntry() {},
-  setSessionName() {},
-  getSessionName() {},
-  setLabel() {},
-  getActiveTools() {},
-  getAllTools() {},
-  setActiveTools() {},
-  refreshTools() {},
-  getCommands() {},
-  setModel() {},
-  getThinkingLevel() {},
-  setThinkingLevel() {},
+  unregisterProvider: noop,
+  assertActive: noop,
+  ...sharedNoopMethods,
+  refreshTools: noop,
   flagValues: new Map(),
-  invalidate() {},
+  invalidate: noop,
 };
 
 const api = {
@@ -40,26 +48,14 @@ const api = {
     }
   },
   events: { on() {}, emit() {} },
-  registerTool() {},
-  registerCommand() {},
-  registerShortcut() {},
-  registerFlag() {},
-  registerMessageRenderer() {},
-  getFlag() {},
-  sendMessage() {},
-  sendUserMessage() {},
-  appendEntry() {},
-  setSessionName() {},
-  getSessionName() {},
-  setLabel() {},
-  exec() {},
-  getActiveTools() {},
-  getAllTools() {},
-  setActiveTools() {},
-  getCommands() {},
-  setModel() {},
-  getThinkingLevel() {},
-  setThinkingLevel() {},
+  registerTool: noop,
+  registerCommand: noop,
+  registerShortcut: noop,
+  registerFlag: noop,
+  registerMessageRenderer: noop,
+  getFlag: noop,
+  ...sharedNoopMethods,
+  exec: noop,
   registerProvider: runtime.registerProvider.bind(runtime),
   unregisterProvider: runtime.unregisterProvider.bind(runtime),
 };
