@@ -253,6 +253,28 @@ const BUILT_IN_PROVIDER_PROFILES: Readonly<Record<string, BuiltInProviderProfile
     supportsApiKeyDiscovery: true,
     supportsOAuthDiscovery: true,
   },
+  sub2api: {
+    id: "sub2api",
+    baseUrl: "http://localhost:8080",
+    api: "openai-completions" as ProviderConfigEntry["api"],
+    discoveryType: "openai-compat",
+    credentialEnvVars: ["SUB2API_KEY"],
+    discoveryBlockModels: ["embedding", "image"],
+    supportsPublicDiscovery: true,
+    supportsApiKeyDiscovery: true,
+    supportsOAuthDiscovery: false,
+  },
+  cpa: {
+    id: "cpa",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    api: "openai-completions" as ProviderConfigEntry["api"],
+    discoveryType: "openai-compat",
+    credentialEnvVars: ["CPA_API_KEY"],
+    discoveryBlockModels: ["embedding", "image"],
+    supportsPublicDiscovery: true,
+    supportsApiKeyDiscovery: true,
+    supportsOAuthDiscovery: false,
+  },
 };
 
 export function getBuiltInProviderProfile(providerId: string): BuiltInProviderProfile | undefined {

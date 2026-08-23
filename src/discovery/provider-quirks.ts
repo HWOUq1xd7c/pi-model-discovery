@@ -32,5 +32,6 @@ export function resolveOpenAICompatibleModelsEndpoint(provider: ProviderConfigEn
   if (provider.discovery.endpointPath) return provider.discovery.endpointPath;
   if (provider.id === "cloudflare") return inferCloudflareModelsEndpoint(provider.baseUrl) ?? DEFAULT_OPENAI_MODELS_ENDPOINT;
   if (XIAOMI_MODEL_DISCOVERY_PROVIDER_IDS.has(provider.id)) return inferXiaomiModelsEndpoint(provider.baseUrl) ?? DEFAULT_OPENAI_MODELS_ENDPOINT;
+  if (provider.id === "sub2api") return "v1/models";
   return DEFAULT_OPENAI_MODELS_ENDPOINT;
 }

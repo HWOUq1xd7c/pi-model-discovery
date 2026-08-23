@@ -20,13 +20,6 @@ function displayNameFromId(id: string, providerId: string): string {
 function withProvenance<T extends DiscoveredModel>(model: T, field: keyof CapabilityProvenance, nextValue: unknown, source: string, currentValue: unknown): T {
   if (nextValue === undefined) return model;
   if (valuesEqual(currentValue, nextValue)) {
-    const currentSource = model.capabilityProvenance?.[field];
-    if (source === "modelsDev" && currentSource === "cache") {
-      return {
-        ...model,
-        capabilityProvenance: recordCapabilityProvenance(model.capabilityProvenance, field, source),
-      };
-    }
     return model;
   }
   return {
@@ -76,30 +69,6 @@ export function applyModelDefaults(model: DiscoveredModel, defaults: DiscoveryDe
   if (defaults.compat !== undefined) next.compat = defaults.compat;
 
   return next;
-}
-
-function shouldUseCachedField(cached: DiscoveredModel, field: keyof ModelDefaults): boolean {
-  const provenance = cached.capabilityProvenance?.[field as keyof NonNullable<DiscoveredModel["capabilityProvenance"]>];
-  if (provenance === "globalDefaults") return false;
-  if (provenance !== undefined) return true;
-  return cached.sources.globalDefaults !== true;
-}
-
-function cacheDefaults(cached: DiscoveredModel | undefined): ModelDefaults | undefined {
-  if (!cached) return undefined;
-  const defaults: ModelDefaults = {};
-  if (shouldUseCachedField(cached, "name")) defaults.name = cached.name;
-  if (shouldUseCachedField(cached, "baseUrl")) defaults.baseUrl = cached.baseUrl;
-  if (shouldUseCachedField(cached, "reasoning")) defaults.reasoning = cached.reasoning;
-  if (shouldUseCachedField(cached, "thinkingLevelMap")) defaults.thinkingLevelMap = cached.thinkingLevelMap ? { ...cached.thinkingLevelMap } : undefined;
-  if (shouldUseCachedField(cached, "input")) defaults.input = cached.input;
-  if (shouldUseCachedField(cached, "output")) defaults.output = cached.output;
-  if (shouldUseCachedField(cached, "capabilities")) defaults.capabilities = cached.capabilities;
-  if (shouldUseCachedField(cached, "cost")) defaults.cost = cached.cost;
-  if (shouldUseCachedField(cached, "contextWindow")) defaults.contextWindow = cached.contextWindow;
-  if (shouldUseCachedField(cached, "maxTokens")) defaults.maxTokens = cached.maxTokens;
-  if (shouldUseCachedField(cached, "compat")) defaults.compat = cached.compat;
-  return Object.keys(defaults).length > 0 ? defaults : undefined;
 }
 
 function applyEndpointField<K extends keyof DiscoveredModel>(
@@ -302,8 +271,84 @@ function applyOpenAIReasoningCompatDefaults(model: DiscoveredModel): DiscoveredM
   };
 }
 
+function applySub2apiQuirks(provider: ProviderConfigEntry, model: DiscoveredModel): DiscoveredModel {
+  const isClaude = /claude/i.test(model.id);
+  const rawBase = provider.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const protocol = isClaude ? "anthropic-messages" : "openai-completions";
+  const baseUrl = isClaude ? rawBase : `${rawBase}/v1`;
+
+  let nextModel: DiscoveredModel = {
+    ...model,
+    api: model.api ?? (protocol as DiscoveredModel["api"]),
+    baseUrl: model.baseUrl ?? baseUrl,
+  };
+
+  if (isClaude) {
+    const isReasoning = !/claude-3-(?!7-)/i.test(model.id);
+    let contextWindow = model.contextWindow;
+    let maxTokens = model.maxTokens;
+    let thinkingLevelMap = model.thinkingLevelMap;
+
+    if (!contextWindow || contextWindow === 128000) {
+      if (/opus-4-[678]|opus-5|fable-5|sonnet-4-6|sonnet-5/i.test(model.id)) {
+        contextWindow = 1000000;
+        maxTokens = /opus-4-[67]/i.test(model.id) ? 128000 : 64000;
+      } else if (/claude-3-(5-)?/i.test(model.id)) {
+        contextWindow = 200000;
+        maxTokens = 8192;
+      } else {
+        contextWindow = 200000;
+        maxTokens = 64000;
+      }
+    }
+
+    if (/opus-4-6/i.test(model.id)) {
+      thinkingLevelMap = { ...(thinkingLevelMap ?? {}), xhigh: "max" };
+    } else if (/opus-4-7/i.test(model.id)) {
+      thinkingLevelMap = { ...(thinkingLevelMap ?? {}), xhigh: "xhigh" };
+    }
+
+    nextModel = {
+      ...nextModel,
+      reasoning: isReasoning,
+      contextWindow,
+      maxTokens,
+      thinkingLevelMap,
+    };
+  } else {
+    const isReasoning = Boolean(model.reasoning) || /gpt-5|codex|^o[1-9]|reason|think/i.test(model.id);
+    nextModel = {
+      ...nextModel,
+      reasoning: isReasoning,
+      contextWindow: model.contextWindow && model.contextWindow !== 128000 ? model.contextWindow : 400000,
+      maxTokens: model.maxTokens && model.maxTokens !== 16384 ? model.maxTokens : 128000,
+      thinkingLevelMap: isReasoning ? { ...(model.thinkingLevelMap ?? {}), minimal: null } : model.thinkingLevelMap,
+    };
+  }
+
+  return nextModel;
+}
+
+function applyCpaQuirks(_provider: ProviderConfigEntry, model: DiscoveredModel): DiscoveredModel {
+  const isKimi = /kimi|moonshot/i.test(model.id);
+  let nextModel = model;
+  if (isKimi) {
+    nextModel = {
+      ...nextModel,
+      compat: { ...(nextModel.compat ?? {}), supportsDeveloperRole: false },
+    };
+  }
+  return nextModel;
+}
+
 export function applyProviderModelQuirks(provider: ProviderConfigEntry, model: DiscoveredModel): DiscoveredModel {
   let nextModel = model;
+  if (provider.id === "sub2api") {
+    nextModel = applySub2apiQuirks(provider, nextModel);
+  } else if (provider.id === "cpa") {
+    nextModel = applyCpaQuirks(provider, nextModel);
+  }
+
   if (isOpenAICompatibleReasoningModel(provider, nextModel)) {
     nextModel = applyOpenAIReasoningCompatDefaults(nextModel);
   }
@@ -456,9 +501,7 @@ export function enrichProviderModels(
   provider: ProviderConfigEntry,
   rawModels: RawDiscoveredModel[],
   modelsDevLookup: ModelsDevLookup,
-  cachedModels: DiscoveredModel[] = [],
 ): DiscoveredModel[] {
-  const cacheById = new Map(cachedModels.map((model) => [model.id, model]));
   const catalogIdentityIndex = buildCatalogIdentityIndex(modelsDevLookup);
   const enriched = rawModels.map((rawModel) => {
     let model: DiscoveredModel = {
@@ -475,7 +518,6 @@ export function enrichProviderModels(
     };
 
     const catalogDefaults = modelsDevDefaults(provider, rawModel, modelsDevLookup, catalogIdentityIndex);
-    model = applyModelDefaults(model, cacheDefaults(cacheById.get(rawModel.id)), "cache");
     model = applyModelDefaults(model, catalogDefaults, "modelsDev");
     if (provider.source === "auto-import") {
       model = applyModelDefaults(model, provider.modelDefaults[rawModel.id], "modelsJsonDefaults");
