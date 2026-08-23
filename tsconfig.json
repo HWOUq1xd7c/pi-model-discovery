@@ -8,19 +8,14 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "types": ["node"],
-    "typeRoots": ["../pi-mcp-adapter/node_modules/@types"],
     "rootDir": ".",
     "outDir": "dist",
     "resolveJsonModule": true,
     "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": {
-      "@mariozechner/pi-coding-agent": [
-        "../pi-agent-router/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts"
-      ]
-    }
+    "baseUrl": "."
   },
   "include": [
+    "types/**/*.d.ts",
     "index.ts",
     "src/**/*.ts",
     "test/**/*.ts"

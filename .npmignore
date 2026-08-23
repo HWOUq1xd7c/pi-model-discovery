@@ -1,7 +1,6 @@
 node_modules
 .env
 .env.*
-dist
 coverage
 cache.json
 config.json
@@ -12,6 +11,7 @@ debug
 tsconfig.json
 package-lock.json
 test
+dist/test
 tests
 *.log
 *.tmp

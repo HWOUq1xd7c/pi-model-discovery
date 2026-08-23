@@ -2,7 +2,7 @@
   "name": "pi-model-discovery",
   "version": "0.3.0",
   "private": false,
-  "description": "Pi extension that discovers provider models, enriches metadata, caches results, and registers them dynamically.",
+  "description": "Pi extension that reads auth.json and models.json, discovers provider models, and writes the model list back to models.json.",
   "type": "module",
   "main": "./index.ts",
   "exports": {
@@ -10,7 +10,11 @@
   },
   "files": [
     "index.ts",
+    "dist/index.js",
+    "dist/src",
     "src",
+    "types",
+    "scripts/sync-models.mjs",
     "scripts/verify-free-models.mjs",
     "config/config.example.json",
     "config.schema.json",
@@ -29,12 +33,12 @@
     "lint": "npm run audit:terminal",
     "audit:terminal": "node scripts/audit-terminal.mjs",
     "validate:json": "node scripts/validate-json.mjs",
+    "sync:models": "npm run build --silent && node scripts/sync-models.mjs",
     "verify:free-models": "npm run build --silent && node scripts/verify-free-models.mjs",
     "test": "npm run build --silent && node --test \"dist/test/**/*.test.js\"",
     "check": "npm run typecheck && npm run lint && npm run validate:json && npm run build && npm run test",
     "package:dry-run": "npm pack --dry-run",
-    "prepublishOnly": "npm run check",
-    "postinstall": "node -e \"const fs=require('fs'),cp=require('child_process'),p=require('path');const cwd=process.cwd();const normalized=cwd.split(p.sep).join('/');if(!normalized.includes('/.pi/agent/extensions/'))process.exit(0);const s=p.resolve(cwd,'../../scripts/patch-vulnerable-deps.mjs');if(!fs.existsSync(s))process.exit(0);const r=cp.spawnSync(process.execPath,[s,'--target',cwd,'--quiet'],{stdio:'inherit'});process.exit(r.status||0)\""
+    "prepublishOnly": "npm run check"
   },
   "keywords": [
     "pi-package",
@@ -63,16 +67,19 @@
     "@earendil-works/pi-coding-agent": "^0.74.0 || ^0.75.0 || ^0.77.0 || ^0.78.0 || ^0.79.0 || ^0.80.0",
     "@earendil-works/pi-tui": "^0.74.0 || ^0.75.0 || ^0.77.0 || ^0.78.0 || ^0.79.0 || ^0.80.0"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^26.1.0",
-    "typescript": "^6.0.3",
-    "@earendil-works/pi-coding-agent": "^0.80.3"
+    "typescript": "^6.0.3"
   },
   "publishConfig": {
     "access": "public"
-  },
-  "overrides": {
-    "protobufjs": "7.6.3",
-    "ws": "8.21.0"
   }
 }
