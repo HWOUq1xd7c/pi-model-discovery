@@ -12,11 +12,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function uniqueNonEmptyStrings(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
-  const normalized = values.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
+  const normalized = values
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim());
   return Array.from(new Set(normalized));
 }
 
-/** Return the first boolean value in {@link values}, or `undefined` if none are booleans. */
 export function readBooleanValue(...values: unknown[]): boolean | undefined {
   for (const value of values) {
     if (typeof value === "boolean") return value;
@@ -26,15 +27,26 @@ export function readBooleanValue(...values: unknown[]): boolean | undefined {
 
 function isLocalHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
-  return LOCAL_HOSTNAMES.has(normalized) || normalized.startsWith("127.");
+  return LOCAL_HOSTNAMES.has(normalized) || /^127(?:\.\d{1,3}){3}$/.test(normalized);
 }
 
 function isBlockedMetadataHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
-  return normalized === "169.254.169.254" || normalized.startsWith("169.254.") || normalized === "metadata.google.internal";
+  return normalized === "169.254.169.254" || normalized === "metadata.google.internal";
 }
 
 export function validateBaseUrl(value: string, options: { allowLocalHttp?: boolean } = {}): BaseUrlValidationResult {
+  return validateUrl(value, { ...options, rejectQuery: true });
+}
+
+export function validateEndpointUrl(value: string, options: { allowLocalHttp?: boolean; baseUrl?: string } = {}): BaseUrlValidationResult {
+  return validateUrl(value, options);
+}
+
+function validateUrl(
+  value: string,
+  options: { allowLocalHttp?: boolean; baseUrl?: string; rejectQuery?: boolean },
+): BaseUrlValidationResult {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -48,7 +60,7 @@ export function validateBaseUrl(value: string, options: { allowLocalHttp?: boole
   if (parsed.username || parsed.password) {
     return { ok: false, reason: "baseUrl must not contain credentials" };
   }
-  if (parsed.search || parsed.hash) {
+  if ((options.rejectQuery && parsed.search) || parsed.hash) {
     return { ok: false, reason: "baseUrl must not contain query strings or fragments" };
   }
   if (isBlockedMetadataHostname(parsed.hostname)) {
@@ -56,6 +68,13 @@ export function validateBaseUrl(value: string, options: { allowLocalHttp?: boole
   }
   if (parsed.protocol === "http:" && !(options.allowLocalHttp && isLocalHostname(parsed.hostname))) {
     return { ok: false, reason: "baseUrl must use https unless the host is local development" };
+  }
+  if (options.baseUrl) {
+    const baseValidation = validateBaseUrl(options.baseUrl, { allowLocalHttp: options.allowLocalHttp });
+    if (!baseValidation.ok || !baseValidation.value) return baseValidation;
+    if (parsed.origin !== new URL(baseValidation.value).origin) {
+      return { ok: false, reason: "endpointUrl must use the provider baseUrl origin" };
+    }
   }
 
   return { ok: true, value: parsed.toString().replace(/\/$/, "") };

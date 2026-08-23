@@ -4,7 +4,7 @@ import { dirname, join, parse, resolve } from "node:path";
 import { getBuiltInProviderProfile, builtInProfileAllowsCredential, listBuiltInProviderProfileIds, type BuiltInCredentialKind, type BuiltInProviderProfile } from "../discovery/builtin-profiles.js";
 import { inferCloudflareModelsEndpoint, inferXiaomiModelsEndpoint } from "../discovery/provider-quirks.js";
 import { normalizeInput, normalizeOutput } from "../enrichment/defaults.js";
-import { isRecord, validateBaseUrl } from "../shared/validation.js";
+import { isRecord, validateBaseUrl, validateEndpointUrl } from "../shared/validation.js";
 import { SUPPORTED_DISCOVERY_TYPES } from "./types.js";
 import type {
   AutoImportConfig,
@@ -20,7 +20,6 @@ import type {
   RegistrationImportMode,
   RegistrationOwnershipConflictMode,
 } from "./types.js";
-import type { CredentialEntry } from "./types.js";
 
 const DEFAULT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -183,7 +182,7 @@ const ABSOLUTE_ENDPOINT_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const DEFAULT_MODELS_DEV_URL = "https://models.dev/api.json";
 const DEFAULT_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 
-function validateEndpointPath(value: string | undefined, warnings: string[], label: string): { ok: boolean; value?: string } {
+function validateEndpointPath(value: string | undefined, warnings: string[], label: string, baseUrl?: string): { ok: boolean; value?: string } {
   const endpointPath = typeof value === "string" ? value.trim() : "";
   if (!endpointPath) return { ok: true };
   if (!ABSOLUTE_ENDPOINT_PATTERN.test(endpointPath)) return { ok: true, value: endpointPath };
@@ -200,7 +199,7 @@ function validateEndpointPath(value: string | undefined, warnings: string[], lab
     return { ok: false };
   }
 
-  const validation = validateBaseUrl(`${parsed.origin}${parsed.pathname}`, { allowLocalHttp: true });
+  const validation = validateEndpointUrl(parsed.toString(), { allowLocalHttp: true, baseUrl });
   if (!validation.ok || !validation.value) {
     warnings.push(`${label} ${validation.reason ?? "is invalid"}.`);
     return { ok: false };
@@ -526,6 +525,7 @@ function normalizeProviderDiscovery(
   rawProvider: Record<string, unknown>,
   providerId: string,
   label: string,
+  baseUrl: string,
   defaultCacheTtl: number,
   warnings: string[],
 ): ProviderDiscoveryConfig | undefined {
@@ -537,7 +537,7 @@ function normalizeProviderDiscovery(
   }
   const discoveryHeaders = resolveEnvRecord(toStringRecord(discoveryRaw.headers, warnings, `${label}.discovery.headers`), warnings, `${label}.discovery.headers`);
   if (!discoveryHeaders) return undefined;
-  const endpointPath = validateEndpointPath(typeof discoveryRaw.endpointPath === "string" ? discoveryRaw.endpointPath : undefined, warnings, `${label}.discovery.endpointPath`);
+  const endpointPath = validateEndpointPath(typeof discoveryRaw.endpointPath === "string" ? discoveryRaw.endpointPath : undefined, warnings, `${label}.discovery.endpointPath`, baseUrl);
   if (!endpointPath.ok) {
     warnings.push(`${label}.discovery.endpointPath is unsafe; skipping provider ${providerId}.`);
     return undefined;
@@ -631,7 +631,7 @@ function normalizeProvider(
   const headers = resolveEnvRecord(toStringRecord(rawProvider.headers, warnings, `${label}.headers`), warnings, `${label}.headers`);
   if (!headers) return undefined;
 
-  const discovery = normalizeProviderDiscovery(rawProvider, id, label, defaultCacheTtl, warnings);
+  const discovery = normalizeProviderDiscovery(rawProvider, id, label, baseUrl, defaultCacheTtl, warnings);
   if (!discovery) return undefined;
 
   return {
@@ -734,7 +734,6 @@ function inferAutoEndpointPath(
   if (configuredEndpoint) return configuredEndpoint;
   if (profile?.endpointPath) return profile.endpointPath;
   const profileId = profile?.id ?? providerId;
-  if (profileId === "cline") return "https://openrouter.ai/api/v1/models";
   if (profileId === "cloudflare") return inferCloudflareModelsEndpoint(effectiveBaseUrl);
   if (profileId === "xiaomi" || profileId.startsWith("xiaomi-token-plan-")) return inferXiaomiModelsEndpoint(effectiveBaseUrl);
   return undefined;
@@ -801,63 +800,53 @@ function sanitizeImportedHeaders(headers: Record<string, string>, warnings: stri
   return sanitized;
 }
 
-/**
- * Resolve the full credential pool available to a provider for rotation. Walks
- * every ordered candidate id, resolves its API-key credential, and deduplicates
- * by key value. The primary credential (the one already selected for
- * `provider.apiKey`) is always first; remaining distinct keys follow in candidate
- * order so a verifier can rotate on retryable failures. Public/anonymous and
- * OAuth credentials are excluded (OAuth is not approved for verifier probes).
- * Returns `undefined` when only the primary key is available, so single-key
- * providers pay no pool overhead.
- */
-function resolveCredentialPool(
-  authRoot: unknown,
-  orderedCredentialProviderIds: readonly string[],
-  autoImport: AutoImportConfig,
-  profile: BuiltInProviderProfile | undefined,
-  primary: AutoImportCredential,
-): CredentialEntry[] | undefined {
-  if (primary.kind === "public" || primary.kind === "oauth") return undefined;
-  const pool: CredentialEntry[] = [];
-  const seen = new Set<string>();
-  const add = (credential: AutoImportCredential, sourceId: string): void => {
-    if (credential.kind !== "api_key") return;
-    if (seen.has(credential.apiKey)) return;
-    seen.add(credential.apiKey);
-    pool.push({ apiKey: credential.apiKey, authHeader: credential.authHeader, headers: credential.headers, sourceId });
-  };
-  add(primary, orderedCredentialProviderIds[0] ?? "");
-  for (const candidateId of orderedCredentialProviderIds) {
-    const localWarnings: string[] = [];
-    const credential = resolveAutoImportCredential(authRoot, candidateId, { autoImport, profile, warnings: localWarnings, options: { requireAuthJsonCredential: false } });
-    if (credential) add(credential, candidateId);
-  }
-  return pool.length > 1 ? pool : undefined;
-}
-
 function readCredentialRequestOverrides(authRoot: unknown, providerId: string, warnings: string[]): Pick<AutoImportCredential, "baseUrl" | "headers"> {
   if (!isRecord(authRoot)) return {};
   const credential = authRoot[providerId];
-  if (!isRecord(credential) || !isRecord(credential.request)) return {};
+  if (!isRecord(credential)) return {};
   const overrides: Pick<AutoImportCredential, "baseUrl" | "headers"> = {};
 
-  if (typeof credential.request.baseUrl === "string" && credential.request.baseUrl.trim()) {
-    const baseUrl = credential.request.baseUrl.trim();
-    const validation = validateBaseUrl(baseUrl, { allowLocalHttp: true });
+  const request = isRecord(credential.request) ? credential.request : undefined;
+  const env = isRecord(credential.env) ? credential.env : undefined;
+
+  let candidateBaseUrl: string | undefined;
+  if (request && typeof request.baseUrl === "string" && request.baseUrl.trim()) {
+    candidateBaseUrl = request.baseUrl.trim();
+  } else if (env) {
+    const rawEnvBase = typeof env.SUB2API_BASE_URL === "string" ? env.SUB2API_BASE_URL
+      : typeof env.CPA_BASE_URL === "string" ? env.CPA_BASE_URL
+      : typeof env.BASE_URL === "string" ? env.BASE_URL
+      : undefined;
+    if (rawEnvBase && rawEnvBase.trim()) {
+      candidateBaseUrl = rawEnvBase.trim();
+      if (providerId === "cpa" && !candidateBaseUrl.endsWith("/v1")) {
+        candidateBaseUrl = `${candidateBaseUrl.replace(/\/+$/, "")}/v1`;
+      }
+    }
+  } else if (providerId === "sub2api" && process.env.SUB2API_BASE_URL) {
+    candidateBaseUrl = process.env.SUB2API_BASE_URL.trim();
+  } else if (providerId === "cpa" && process.env.CPA_BASE_URL) {
+    const raw = process.env.CPA_BASE_URL.trim();
+    candidateBaseUrl = raw.endsWith("/v1") ? raw : `${raw.replace(/\/+$/, "")}/v1`;
+  }
+
+  if (candidateBaseUrl) {
+    const validation = validateBaseUrl(candidateBaseUrl, { allowLocalHttp: true });
     if (validation.ok && validation.value) {
       overrides.baseUrl = validation.value;
     } else {
-      warnings.push(`Auto-import ignored provider '${providerId}' auth.json request.baseUrl because ${validation.reason ?? "it is invalid"}.`);
+      warnings.push(`Auto-import ignored provider '${providerId}' baseUrl '${candidateBaseUrl}' because ${validation.reason ?? "it is invalid"}.`);
     }
   }
 
-  const headers = sanitizeImportedHeaders(
-    toStringRecord(credential.request.headers, warnings, `auth.json.${providerId}.request.headers`),
-    warnings,
-    `auth.json.${providerId}.request.headers`,
-  );
-  if (Object.keys(headers).length > 0) overrides.headers = headers;
+  if (request) {
+    const headers = sanitizeImportedHeaders(
+      toStringRecord(request.headers, warnings, `auth.json.${providerId}.request.headers`),
+      warnings,
+      `auth.json.${providerId}.request.headers`,
+    );
+    if (Object.keys(headers).length > 0) overrides.headers = headers;
+  }
   return overrides;
 }
 
@@ -1054,61 +1043,6 @@ function readFirstAuthCredentialKind(authRoot: unknown, providerIds: readonly st
   return undefined;
 }
 
-function hasAuthCredential(authRoot: unknown, providerId: string): boolean {
-  return readAuthCredential(authRoot, providerId, []).apiKey !== undefined;
-}
-
-function credentialHasRequestBaseUrl(authRoot: unknown, providerId: string): boolean {
-  if (!isRecord(authRoot)) return false;
-  const credential = authRoot[providerId];
-  return isRecord(credential) && isRecord(credential.request) && typeof credential.request.baseUrl === "string" && credential.request.baseUrl.trim().length > 0;
-}
-
-function orderCredentialProviderIds(
-  providerId: string,
-  credentialProviderIds: readonly string[],
-  authRoot: unknown,
-  provider: Record<string, unknown>,
-  profile: BuiltInProviderProfile | undefined,
-): string[] {
-  const unique = Array.from(new Set([providerId, ...credentialProviderIds]));
-  const authBacked = unique.filter((candidateProviderId) => hasAuthCredential(authRoot, candidateProviderId));
-  const candidates = authBacked.length > 0 ? authBacked : [providerId];
-  const providerBaseUrl = typeof provider.baseUrl === "string" && provider.baseUrl.trim().length > 0 ? provider.baseUrl.trim() : undefined;
-  const needsCredentialBaseUrl = !providerBaseUrl && !inferProfileBaseUrl(profile);
-
-  return [...candidates].sort((left, right) => {
-    if (needsCredentialBaseUrl) {
-      const requestBaseUrlRank = Number(credentialHasRequestBaseUrl(authRoot, right)) - Number(credentialHasRequestBaseUrl(authRoot, left));
-      if (requestBaseUrlRank !== 0) return requestBaseUrlRank;
-    }
-    if (left === providerId) return -1;
-    if (right === providerId) return 1;
-    return 0;
-  });
-}
-
-function resolveAutoImportCredentialFromCandidates(
-  authRoot: unknown,
-  providerId: string,
-  credentialProviderIds: readonly string[],
-  context: AutoImportCredentialContext,
-): AutoImportCredential | undefined {
-  const { autoImport, profile, options, warnings } = context;
-  let firstFailureWarnings: string[] = [];
-  for (const credentialProviderId of credentialProviderIds) {
-    const localWarnings: string[] = [];
-    const credential = resolveAutoImportCredential(authRoot, credentialProviderId, { autoImport, profile, warnings: localWarnings, options });
-    if (credential) {
-      warnings.push(...localWarnings);
-      return credential;
-    }
-    if (firstFailureWarnings.length === 0) firstFailureWarnings = localWarnings;
-  }
-  warnings.push(...firstFailureWarnings.map((warning) => warning.replace(/provider '[^']+'/u, `provider '${providerId}'`)));
-  return undefined;
-}
-
 function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels: number | undefined, authRoot: unknown, modelsRoot: unknown, builtinProviderIds: ReadonlySet<string>, warnings: string[]): ProviderConfigEntry[] {
   if (!autoImport.enabled) return [];
   const modelProviderEntries = readModelsProviderEntries(modelsRoot, warnings);
@@ -1151,8 +1085,7 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
       continue;
     }
 
-    const orderedCredentialProviderIds = orderCredentialProviderIds(providerId, group.credentialProviderIds, authRoot, provider, profile);
-    const credential = resolveAutoImportCredentialFromCandidates(authRoot, providerId, orderedCredentialProviderIds, { autoImport, profile, warnings, options: { requireAuthJsonCredential: hasModelsMetadata } });
+    const credential = resolveAutoImportCredential(authRoot, providerId, { autoImport, profile, warnings, options: { requireAuthJsonCredential: hasModelsMetadata } });
     if (!credential) continue;
     if (!hasModelsMetadata && profile && !builtInProfileAllowsAutoImportCredential(profile, credential.kind)) {
       if (credential.kind === "public") {
@@ -1163,9 +1096,8 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
       continue;
     }
 
-    const credentialPool = resolveCredentialPool(authRoot, orderedCredentialProviderIds, autoImport, profile, credential);
-
-    const rawBaseUrl = credential.baseUrl ?? (typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : undefined) ?? inferProfileBaseUrl(profile) ?? "";
+    const configuredBaseUrl = typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : "";
+    const rawBaseUrl = configuredBaseUrl || credential.baseUrl || inferProfileBaseUrl(profile) || "";
     if (!rawBaseUrl) {
       warnings.push(`Auto-import skipped provider '${providerId}': baseUrl is missing and no built-in provider profile can infer it.`);
       continue;
@@ -1181,7 +1113,7 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
 
     const effectiveBaseUrl = baseUrl;
     const inferredEndpointPath = inferAutoEndpointPath(providerId, effectiveBaseUrl, autoImport, profile);
-    const endpointPath = validateEndpointPath(inferredEndpointPath, warnings, `Auto-import provider '${providerId}' discovery.endpointPath`);
+    const endpointPath = validateEndpointPath(inferredEndpointPath, warnings, `Auto-import provider '${providerId}' discovery.endpointPath`, effectiveBaseUrl);
     const discoveryEndpointPath = endpointPath.ok ? endpointPath.value : undefined;
     const fallbackModelIds = profile?.staticModelIds ? Array.from(profile.staticModelIds) : readFallbackModelIds(provider.models);
     const providerConfigLabel = `models.json.providers.${inheritedFromProviderId ?? providerId}`;
@@ -1210,7 +1142,6 @@ function loadAutoImportedProviders(autoImport: AutoImportConfig, globalMaxModels
       modelDefaults: readModelDefaults(provider.models, warnings, inheritedFromProviderId ?? providerId),
       fallbackModelIds,
       source: "auto-import",
-      credentials: credentialPool,
     });
   }
   return providers;
@@ -1304,6 +1235,10 @@ function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: Hidde
   const raw = isRecord(rawConfig) ? rawConfig : {};
   const debug = raw.debug === true;
   const enabled = raw.enabled !== false;
+  const refreshOnStart = raw.refreshOnStart !== false;
+  const refreshIntervalMs = typeof raw.refreshIntervalMs === "number" && Number.isInteger(raw.refreshIntervalMs) && raw.refreshIntervalMs >= 0
+    ? raw.refreshIntervalMs
+    : 0;
   const cacheTTL = toPositiveInteger(raw.cacheTTL, warnings, "cacheTTL", DEFAULT_CACHE_TTL_MS);
   const maxModels = toPositiveInteger(raw.maxModels, warnings, "maxModels");
   const modelsDevRaw = isRecord(raw.modelsDev) ? raw.modelsDev : {};
@@ -1344,6 +1279,8 @@ function loadConfigInternal(paths: LoaderPaths, hiddenProviderResolution?: Hidde
   const config: ExtensionConfig = {
     enabled,
     debug,
+    refreshOnStart,
+    refreshIntervalMs,
     cacheTTL,
     cacheFile,
     maxModels,

@@ -78,7 +78,7 @@ export function createFetchTimeout(timeoutMs: number): { controller: AbortContro
 export async function safeFetchJson<T>(url: string, init: RequestInit, timeoutMs: number): Promise<FetchJsonResult<T>> {
   const { controller, clear } = createFetchTimeout(timeoutMs);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, redirect: "error", signal: controller.signal });
     if (!response.ok) {
       return { ok: false, status: response.status, error: `HTTP ${response.status}` };
     }
