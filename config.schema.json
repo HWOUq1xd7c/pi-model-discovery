@@ -5,6 +5,8 @@
   "properties": {
     "enabled": { "type": "boolean", "default": true },
     "debug": { "type": "boolean", "default": false },
+    "refreshOnStart": { "type": "boolean", "default": true },
+    "refreshIntervalMs": { "type": "integer", "minimum": 0, "default": 0 },
     "$comment": {
       "type": "string",
       "description": "Optional human-readable note. Example configs use this to document that http:// baseUrl values are accepted only for localhost/127.x/::1 development endpoints."
@@ -141,30 +143,6 @@
         }
       }
     },
-    "registration": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Optional registration UX settings. The default replace mode preserves historical pi-model-discovery behavior for non-managed providers.",
-      "properties": {
-        "importMode": {
-          "enum": ["replace", "merge", "sync"],
-          "default": "replace",
-          "description": "replace registers only freshly discovered models; merge preserves existing manual and prior pi-model-discovery entries; sync removes stale pi-model-discovery entries while preserving manual entries. Providers managed by pi-multi-auth default to merge during ownership conflicts."
-        }
-      }
-    },
-    "registrationOwnership": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Conflict behavior for provider IDs owned by pi-multi-auth credentials/settings.",
-      "properties": {
-        "onConflict": {
-          "enum": ["merge", "skip"],
-          "default": "merge",
-          "description": "merge registers discovered models for the managed provider without changing ownership; skip is a legacy opt-in that suppresses pi-model-discovery registration."
-        }
-      }
-    },
     "providers": {
       "type": "array",
       "items": {
@@ -238,7 +216,7 @@
             "type": "array",
             "items": { "type": "string" },
             "default": [],
-            "description": "Optional fallback model IDs registered from config/models.json defaults when live discovery and cache are unavailable."
+            "description": "Optional fallback model IDs used by static discovery when the provider model list is defined in models.json."
           }
         }
       }

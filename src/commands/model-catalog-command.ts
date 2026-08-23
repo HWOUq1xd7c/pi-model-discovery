@@ -11,6 +11,7 @@ import { applyModelDefaults, buildCatalogIdentityIndex, resolveModelsDevDefaults
 import { fetchModelsDevLookup, mergeModelsDevLookups, type ModelsDevLookup } from "../enrichment/models-dev.js";
 import { fetchOpenRouterLookup } from "../enrichment/openrouter.js";
 import { isTextCompletionModel } from "../shared/model-kind.js";
+import { isRecord } from "../shared/validation.js";
 
 interface ThemeLike {
   fg?(name: string, text: string): string;
@@ -73,24 +74,63 @@ function readCache(cacheFile: string): { cache?: CacheSchema; error?: string } {
   }
 }
 
+function readModelsJson(modelsJsonPath: string): { providers?: Record<string, unknown>; error?: string } {
+  try {
+    const parsed = JSON.parse(readFileSync(modelsJsonPath, "utf-8")) as unknown;
+    return isRecord(parsed) && isRecord(parsed.providers) ? { providers: parsed.providers } : {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function buildCatalogData(extensionRoot: string): CatalogData {
   const { config, warnings } = loadConfig({ extensionRoot });
-  const { cache, error } = readCache(config.cacheFile);
+  const { cache, error: cacheErr } = readCache(config.cacheFile);
+  const { providers: modelsJsonProviders } = readModelsJson(config.autoImport.modelsJsonPath);
+
   const configuredById = new Map(config.providers.map((provider) => [provider.id, provider]));
   const providerIds = new Set<string>([
     ...configuredById.keys(),
+    ...Object.keys(modelsJsonProviders ?? {}),
     ...Object.keys(cache?.providers ?? {}),
   ]);
 
   const providers = Array.from(providerIds)
     .sort((left, right) => left.localeCompare(right))
     .map((id): CatalogProvider => {
-      const entry = cache?.providers[id];
+      const modelsJsonProvider = modelsJsonProviders?.[id];
+      const modelsJsonModels = isRecord(modelsJsonProvider) && Array.isArray(modelsJsonProvider.models)
+        ? (modelsJsonProvider.models as unknown[]).filter(isRecord).map((m): DiscoveredModel => ({
+            id: typeof m.id === "string" ? m.id : "",
+            name: typeof m.name === "string" ? m.name : typeof m.id === "string" ? m.id : "",
+            api: typeof m.api === "string" ? (m.api as DiscoveredModel["api"]) : typeof modelsJsonProvider.api === "string" ? (modelsJsonProvider.api as DiscoveredModel["api"]) : undefined,
+            baseUrl: typeof m.baseUrl === "string" ? m.baseUrl : typeof modelsJsonProvider.baseUrl === "string" ? modelsJsonProvider.baseUrl : undefined,
+            reasoning: typeof m.reasoning === "boolean" ? m.reasoning : undefined,
+            input: Array.isArray(m.input) ? (m.input as InputModality[]) : ["text"],
+            cost: isRecord(m.cost) ? (m.cost as unknown as DiscoveredModel["cost"]) : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: typeof m.contextWindow === "number" ? m.contextWindow : undefined,
+            maxTokens: typeof m.maxTokens === "number" ? m.maxTokens : undefined,
+            compat: isRecord(m.compat) ? m.compat : undefined,
+            isFree: typeof m.isFree === "boolean" ? m.isFree : undefined,
+            sources: { modelsJson: true },
+            capabilityProvenance: {},
+          })).filter((m) => m.id.length > 0)
+        : undefined;
+
+      const entry = modelsJsonModels
+        ? {
+            fetchedAt: new Date().toISOString(),
+            ttlMs: 0,
+            authoritative: true,
+            models: modelsJsonModels,
+          }
+        : cache?.providers[id];
+
       return {
         id,
         configured: configuredById.get(id),
         entry,
-        fresh: entry ? isProviderCacheEntryFresh(id, entry) : false,
+        fresh: modelsJsonModels ? true : entry ? isProviderCacheEntryFresh(id, entry) : false,
         modelCount: entry?.models.length ?? 0,
       };
     });
@@ -108,7 +148,7 @@ function buildCatalogData(extensionRoot: string): CatalogData {
     config,
     configWarnings: warnings,
     cache,
-    cacheError: error,
+    cacheError: cacheErr,
     providers,
     models,
   };
@@ -128,9 +168,7 @@ const COMBINING_MARK_PATTERN = /\p{Mark}/u;
 const WIDE_CODEPOINT_PATTERN = /[\u1100-\u115F\u2329\u232A\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/u;
 
 function stripAnsi(value: string): string {
-  return value
-    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
-    .replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
+  return value.replace(ANSI_OSC_SEQUENCE_PATTERN, "").replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
 }
 
 function charWidth(char: string): number {
@@ -144,12 +182,13 @@ function visibleWidth(value: string): number {
 
 function truncateToWidth(value: string, width: number, ellipsis = "…"): string {
   const safeWidth = Math.max(0, width);
-  if (visibleWidth(value) <= safeWidth) return value;
+  const clean = stripAnsi(value);
+  if (visibleWidth(clean) <= safeWidth) return clean;
   const ellipsisWidth = visibleWidth(ellipsis);
   const targetWidth = Math.max(0, safeWidth - ellipsisWidth);
   let usedWidth = 0;
   let output = "";
-  for (const char of Array.from(stripAnsi(value))) {
+  for (const char of Array.from(clean)) {
     const width = charWidth(char);
     if (usedWidth + width > targetWidth) break;
     output += char;

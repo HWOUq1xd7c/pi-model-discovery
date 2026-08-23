@@ -135,6 +135,8 @@ export interface RegistrationOwnershipConfig {
 export interface ExtensionConfig {
   enabled: boolean;
   debug: boolean;
+  refreshOnStart: boolean;
+  refreshIntervalMs: number;
   cacheTTL: number;
   cacheFile: string;
   maxModels?: number;

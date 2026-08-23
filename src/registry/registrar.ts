@@ -92,6 +92,7 @@ function toProviderModelConfig(model: DiscoveredModel): ExtendedProviderModelCon
     cost: model.cost,
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
+    samplingParams: model.samplingParams ? { ...model.samplingParams } : undefined,
     headers: model.headers,
     compat: model.compat,
     isFree: model.isFree,

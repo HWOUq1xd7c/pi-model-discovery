@@ -6,152 +6,110 @@
 [![License](https://img.shields.io/github/license/MasuRii/pi-model-discovery?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge)]()
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Y8Y01PSSVR)
+`pi-model-discovery` is a lightweight Pi extension and tool that discovers remote LLM provider models and **synchronizes them directly into `~/.pi/agent/models.json`**.
 
-`pi-model-discovery` is a Pi extension that discovers provider models, enriches metadata, caches results, and registers them dynamically with `pi.registerProvider()` for `/scoped-models` and the `/pi-model-discovery` catalog.
+Pi natively loads its model list from `models.json` without requiring runtime memory interception.
 
 </div>
 
 ## Features
 
-- Auto-imports eligible provider definitions from `agent/models.json` and active API-key credentials from `agent/auth.json`.
-- Uses built-in read-only discovery profiles for supported auth-only providers such as NVIDIA, Cloudflare Workers AI, Cerebras, Qwen, Xiaomi, Cline, and Kilo.
-- Discovers OpenAI-compatible, Ollama, Anthropic-compatible, OpenAI Responses, LM Studio, llama.cpp, and static provider catalogs.
-- Enriches discovered models with metadata from supported catalog sources and preserves free/paid classification as best-effort metadata.
-- Registers cached models synchronously on startup/reload, then refreshes stale providers in the background.
-- Writes optional debug logs only to `debug/debug.log` under this extension directory when `debug` is enabled.
+- **Direct `models.json` Persistence**: Discovered models are stored directly and transparently in standard `~/.pi/agent/models.json`.
+- **Simple Refresh Control**: Refresh on session start by default, or set `refreshIntervalMs` for periodic updates.
+- **Zero Runtime Dependencies**: Pure Node.js built-ins with 100% self-contained ambient type declarations.
+- **Multi-Protocol Discovery**: Supports OpenAI-compatible, Ollama, Anthropic-compatible, OpenAI Responses, LM Studio, llama.cpp, and static provider catalogs.
+- **Provider Metadata**: Applies provider defaults and protocol-specific model metadata during synchronization.
+- **Dual Triggering**: Synchronize models on-demand via the `/sync-models` slash command in Pi or the standalone `scripts/sync-models.mjs` CLI tool.
 
 ## Installation
 
-### npm package
+### Pi Extension
+
+Install through Pi's package manager:
 
 ```bash
 pi install npm:pi-model-discovery
 ```
 
-### Git repository
-
-```bash
-pi install git:github.com/MasuRii/pi-model-discovery
-```
-
-### Local extension folder
-
-Place this folder in one of Pi's extension discovery paths:
+Or clone into your local extensions folder:
 
 ```text
 ~/.pi/agent/extensions/pi-model-discovery
-.pi/extensions/pi-model-discovery
 ```
 
-Pi discovers the extension through the root `index.ts` entry listed in `package.json`.
+## How to Initialize & Use
 
-## Usage
+### 1. Configure Credentials (`~/.pi/agent/auth.json`)
 
-Discovery is automatic. On `session_start` and `/reload`, `pi-model-discovery` reads eligible providers and credentials from `agent/models.json` and `agent/auth.json`, refreshes stale providers in the background, and registers discovered models through `pi.registerProvider()`. No command needs to be run to trigger discovery.
+Set your API keys in `~/.pi/agent/auth.json`:
 
-Use Pi's built-in commands to select discovered models once they are registered:
+```json
+{
+  "deepseek": { "type": "api_key", "key": "sk-your-deepseek-key" },
+  "my-custom-proxy": { "type": "api_key", "key": "sk-your-proxy-key" }
+}
+```
 
-- `/scoped-models` — enable/disable registered models for Ctrl+P cycling.
-- `/model` — open the model selector.
+*(Or set environment variables, e.g. `export DEEPSEEK_API_KEY="sk-..."`)*
 
-To inspect the discovery catalog itself (cache freshness, authoritative fallback state, search/filter controls, and per-model metadata), open the read-only TUI:
+### 2. Configure Providers (`~/.pi/agent/models.json`)
+
+- **Known Built-in Providers** (DeepSeek, Groq, Mistral, Together, OpenRouter, etc.):
+  `models.json` can be left empty! The discovery engine uses built-in profiles to automatically discover models and populate `models.json`.
+- **Custom / Private Gateways** (OneAPI, NewAPI, vLLM, LiteLLM):
+  Add a provider skeleton without models:
+  ```json
+  {
+    "providers": {
+      "my-custom-proxy": {
+        "baseUrl": "https://api.myproxy.com/v1",
+        "api": "openai-completions"
+      }
+    }
+  }
+  ```
+- **Local Runners** (Ollama, LM Studio, Llama.cpp):
+  ```json
+  {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://localhost:11434/v1",
+        "api": "openai-completions",
+        "apiKey": "ollama"
+      }
+    }
+  }
+  ```
+
+### 3. Synchronize Models
+
+The extension refreshes `models.json` on the next Pi session start by default. Configure `refreshOnStart: false` and a positive `refreshIntervalMs` when periodic refresh is preferred. Set `refreshIntervalMs` to `0` to disable periodic refresh.
+
+#### Option A: Inside Pi
+Run the slash command inside the Pi terminal:
 
 ```text
-/pi-model-discovery
+/sync-models
+# Or synchronize a specific provider:
+/sync-models deepseek
 ```
 
-This command only views the catalog; it does not trigger discovery. Models registered by Pi built-ins or by other extensions appear alongside models known to `pi-model-discovery`.
-
-### Quick start
-
-1. Install the extension (see [Installation](#installation)).
-2. Start `pi`. Discovery runs automatically in the background on session start.
-3. Run `/scoped-models` to enable newly discovered models for Ctrl+P cycling.
-4. (Optional) Run `/pi-model-discovery` to inspect cache metadata and discovery status.
-
-### Standalone operation
-
-`pi-model-discovery` has no hard dependency on other extensions. It loads and runs correctly when installed alone, and the `/pi-model-discovery` catalog shows every model in Pi's runtime registry, including Pi built-ins. To avoid duplicate ownership, providers that Pi already manages are not re-discovered: auto-import skips any provider that is both a Pi built-in and has an `auth.json` credential, and the registrar filters out discovered models that match Pi built-in model IDs. With no custom `providers` configured, the extension adds nothing on top of Pi's defaults beyond catalog visibility; to discover models from additional auth-only providers (e.g. SambaNova, Novita, DeepInfra), local servers (Ollama, LM Studio, llama.cpp), or custom OpenAI/Anthropic-compatible endpoints, add entries under `providers` in `config.json` (see [Configuration](#configuration)).
-
-## Configuration
-
-Runtime configuration lives in `config.json` at the extension root. A starter template is included at `config/config.example.json`.
-
-By default, `config.json` can leave `providers` empty. With `autoImport.enabled` set to `true` (the default), the extension reads active credentials from `agent/auth.json`, reuses provider metadata from `agent/models.json` when available, falls back to built-in read-only model-list profiles, and skips unsupported/OAuth/missing-auth entries with redacted debug diagnostics only when `debug` is enabled.
-
-Manual `providers` remain supported for custom endpoints or overrides. Explicit providers take precedence over auto-imported providers with the same ID. Keep manual secrets in environment variables with `${ENV_VAR}` references; do not place raw keys in config files. `debug` defaults to `false`; when enabled, logs are written only to `debug/debug.log` in this extension directory.
-
-`baseUrl` values are validated before any network request. Use `https:` for remote providers; `http:` is accepted only for localhost/127.x development endpoints such as Ollama, LM Studio, or local proxies. URLs with credentials, query strings, fragments, or known metadata-service hosts are rejected.
-
-Use `providers[].discovery.allowModels` and `providers[].discovery.blockModels` as substring filters on discovered model IDs. Discovery is uncapped by default; set top-level `maxModels` or `providers[].maxModels` only when you want an explicit positive model limit. Use `providers[].modelDefaults` for explicit per-model metadata overrides and `providers[].fallbackModelIds` when a provider should still register known models after discovery fails and no cache exists.
-
-Provider IDs are a compatibility decision:
-
-- Provider IDs with user credentials owned by Pi Mono remain Pi Mono-managed and are not auto-imported for duplicate ownership. Explicit providers still use this extension config.
-- New provider IDs are isolated and use the API key supplied in this extension config.
-
-Discovered model IDs are preserved exactly as returned by endpoints, so enabled model patterns use `providerId/modelId`. Before dynamic registration, optional Pi built-in model data is filtered by exact and provider-canonical IDs so `pi-model-discovery` does not register duplicate models already supplied by Pi built-ins.
-
-`registration.importMode` defaults to `replace` for backward compatibility on non-managed providers. Providers owned by pi-multi-auth default to merge behavior during explicit ownership conflicts so credential ownership remains with pi-multi-auth. Advanced callers can use `merge` to preserve stale `pi-model-discovery` entries and manual model overrides, or `sync` to remove stale `pi-model-discovery` entries while still preserving manual entries and overrides.
-
-## Runtime behavior
-
-- Registers fresh cached models synchronously on `session_start` and `resources_discover` (`/reload`).
-- Suppresses live discovery while an authoritative cache entry is within its provider TTL, and backs off for five minutes after non-authoritative discovery failures.
-- Debounces concurrent background refreshes and re-registers changed providers after discovery.
-- Honors `PI_MODEL_DISCOVERY_CACHE_ONLY=1` for delegated/cache-only runtimes: cached entries, including stale entries, can register without starting background discovery or catalog HTTP requests.
-- Uses `cache.json` in this extension directory and never writes `agent/models.json`.
-- Never calls `ModelRegistry.refresh()` because that would clear dynamically registered models.
-
-## Free-model verifier
-
-Use the verifier when you want to audit cached `isFree` classifications without changing provider ownership or writing to `agent/models.json`.
+#### Option B: Standalone CLI
+Run the sync script outside of Pi:
 
 ```bash
-npm run verify:free-models -- --dry-run
-npm run verify:free-models -- --provider openrouter --model openai/gpt-oss-20b --strict
-npm run verify:free-models -- --json --no-credentials
+node scripts/sync-models.mjs
+# Options:
+node scripts/sync-models.mjs --provider my-custom-proxy
+node scripts/sync-models.mjs --dry-run
 ```
 
-Flags:
+The tool fetches models, applies provider metadata, merges them into the provider entry, and writes the updated configuration to `models.json`.
 
-- `--help` prints usage and credential guidance.
-- `--dry-run` computes decisions without rewriting `cache.json`.
-- `--provider <id>` limits verification to one cached provider ID.
-- `--model <id>` limits verification to one model ID across matching providers.
-- `--concurrency <n>` sets the positive integer fan-out cap for generation probes.
-- `--json` emits one machine-readable result object with summary counts, timing, and cache status.
-- `--strict` exits non-zero if any model is unverifiable or no model can be verified.
-- `--no-credentials` strips API-key/auth headers from outbound verifier probes.
+## Provider routing
 
-Result categories are `confirmed-free`, `confirmed-paid`, `downgraded-to-paid`, `upgraded-to-free`, `unverifiable`, and `skipped`. Unverifiable results include actionable operator hints such as checking credentials, provider availability, rate limits, endpoint listings, or unsupported discovery APIs.
-
-By default the CLI sends configured provider credentials with probes so authenticated provider endpoints can be checked. Secrets are never printed to stdout/stderr, JSON output, debug logs, or cache files; use `--no-credentials` for anonymous probes when you only want public endpoint behavior.
-
-The probe strategy is intentionally cautious: the verifier reads `cache.json`, consults supported OpenAI-compatible model-list endpoints and explicit pricing metadata first, skips whole-provider-free or unsupported providers, and only calls `chat/completions` when listing data cannot classify a cached free/paid model. Cache writes only happen for changed classifications, and `--dry-run` reports would-be decisions without updating provenance.
-
-## Development
-
-```bash
-npm install
-npm run check
-npm run package:dry-run
-```
-
-`config.schema.json` documents the supported configuration surface. `cache.json`, `config.json`, `debug/`, `dist/`, and `node_modules/` are intentionally excluded from release packaging.
-
-## Compatibility notes
-
-Pi extension discovery uses `fs.readdirSync()` in the local Pi loader without an explicit sort. On common filesystems this is usually alphabetical, but synchronous cache-first registration avoids relying solely on load order. Discovered models that match pi-fast-mode globs are eligible for fast-mode.
-
-## Related Pi Extensions
-
-- [pi-model-profiles](https://github.com/MasuRii/pi-model-profiles) — Whole-agent model frontmatter snapshot management
-- [pi-multi-auth](https://github.com/MasuRii/pi-multi-auth) — Multi-provider credential management, OAuth login, and account rotation
-- [pi-fast-mode](https://github.com/MasuRii/pi-fast-mode) — Fast-mode toggles and priority service tier injection
-- [pi-kiro-provider](https://github.com/MasuRii/pi-kiro-provider) — Kiro streaming AI provider registration
+Each provider uses its own `auth.json` credential and resolved `models.json` endpoint. Absolute discovery endpoints must use the provider endpoint origin.
 
 ## License
 
-[MIT](LICENSE)
+MIT © MasuRii

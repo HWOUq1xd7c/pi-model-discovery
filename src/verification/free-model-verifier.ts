@@ -346,7 +346,7 @@ function readEndpointModelId(modelEntry: unknown): string | undefined {
 async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<FetchJsonOutcome> {
   const timeout = createFetchTimeout(timeoutMs);
   try {
-    const response = await fetch(url, { ...init, signal: timeout.controller.signal });
+    const response = await fetch(url, { ...init, redirect: "error", signal: timeout.controller.signal });
     let data: unknown;
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     if (!contentType || /(^|[;\s])application\/json\b|\+json\b/.test(contentType)) {

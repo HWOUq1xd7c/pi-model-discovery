@@ -36,7 +36,7 @@ test("config loader defaults debug to false, resolves env refs, and warns on pro
   const result = loadConfig({ extensionRoot: dir, configPath, modelsJsonPath, authJsonPath });
   assert.equal(result.config.debug, false);
   assert.equal(result.config.maxModels, undefined);
-  assert.equal(result.config.registration?.importMode, "replace");
+  assert.equal(result.config.registration?.importMode, "merge");
   assert.equal(result.config.registrationOwnership?.onConflict, "merge");
   assert.equal(result.config.providers[0]?.apiKey, envApiKey);
   assert.equal(result.config.providers[0]?.maxModels, undefined);

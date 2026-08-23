@@ -1,13 +1,8 @@
 {
   "debug": false,
-  "$comment": "Security: http:// baseUrl values are accepted only for localhost/127.x/::1 development endpoints; use https:// for remote providers. autoImport can use built-in read-only profiles for supported auth-only credentials (NVIDIA, Cloudflare, Cerebras, Qwen, Xiaomi, Cline, Kilo).",
-  "cacheTTL": 7200000,
-  "registration": {
-    "importMode": "replace"
-  },
-  "registrationOwnership": {
-    "onConflict": "merge"
-  },
+  "refreshOnStart": true,
+  "refreshIntervalMs": 0,
+  "$comment": "autoImport reads provider metadata from models.json and credentials from auth.json, then synchronizes discovered models back into models.json.",
   "autoImport": {
     "enabled": true,
     "includeProviders": [],

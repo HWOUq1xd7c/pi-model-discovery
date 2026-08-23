@@ -119,7 +119,7 @@ test("absolute discovery endpoints and models.dev URLs are validated before netw
         baseUrl: "https://safe.example.invalid/v1",
         apiKey: TEST_API_KEY,
         api: "openai-completions",
-        discovery: { type: "openai-compat", endpointPath: "https://catalog.example.invalid/models" },
+        discovery: { type: "openai-compat", endpointPath: "https://safe.example.invalid/catalog/models" },
       },
     ],
   });
@@ -128,7 +128,7 @@ test("absolute discovery endpoints and models.dev URLs are validated before netw
   const providerIds = result.config.providers.map((entry) => entry.id);
 
   assert.deepEqual(providerIds.sort(), ["auto-one", "safe-endpoint"]);
-  assert.equal(result.config.providers.find((entry) => entry.id === "safe-endpoint")?.discovery.endpointPath, "https://catalog.example.invalid/models");
+  assert.equal(result.config.providers.find((entry) => entry.id === "safe-endpoint")?.discovery.endpointPath, "https://safe.example.invalid/catalog/models");
   assert.equal(result.config.providers.find((entry) => entry.id === "auto-one")?.discovery.endpointPath, undefined);
   assert.equal(result.config.modelsDev.url, "https://models.dev/api.json");
   assert.ok(result.warnings.some((warning) => warning.includes("providers[0].discovery.endpointPath") && warning.includes("skipping provider unsafe-endpoint")));
