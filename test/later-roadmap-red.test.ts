@@ -41,6 +41,8 @@ function extensionConfig(providers: ProviderConfigEntry[]): ExtensionConfig {
   return {
     enabled: true,
     debug: false,
+    refreshOnStart: true,
+    refreshIntervalMs: 0,
     cacheTTL: 60_000,
     cacheFile: "cache.json",
     maxModels: 100,

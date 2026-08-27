@@ -329,15 +329,77 @@ function applySub2apiQuirks(provider: ProviderConfigEntry, model: DiscoveredMode
   return nextModel;
 }
 
-function applyCpaQuirks(_provider: ProviderConfigEntry, model: DiscoveredModel): DiscoveredModel {
+function applyCpaQuirks(provider: ProviderConfigEntry, model: DiscoveredModel): DiscoveredModel {
+  const isClaude = /claude/i.test(model.id);
   const isKimi = /kimi|moonshot/i.test(model.id);
-  let nextModel = model;
+  const rawBase = provider.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const protocol = isClaude ? "anthropic-messages" : "openai-completions";
+  const baseUrl = isClaude ? rawBase : `${rawBase}/v1`;
+
+  let nextModel: DiscoveredModel = {
+    ...model,
+    api: model.api ?? (protocol as DiscoveredModel["api"]),
+    baseUrl: model.baseUrl ?? baseUrl,
+  };
+
   if (isKimi) {
     nextModel = {
       ...nextModel,
       compat: { ...(nextModel.compat ?? {}), supportsDeveloperRole: false },
     };
   }
+
+  if (isClaude) {
+    const isReasoning = !/claude-3-(?!7-)/i.test(model.id);
+    let contextWindow = model.contextWindow;
+    let maxTokens = model.maxTokens;
+    let thinkingLevelMap = model.thinkingLevelMap;
+
+    if (!contextWindow || contextWindow === 128000) {
+      if (/opus-4-[678]|opus-5|fable-5|sonnet-4-6|sonnet-5/i.test(model.id)) {
+        contextWindow = 1000000;
+        maxTokens = /opus-4-[67]/i.test(model.id) ? 128000 : 64000;
+      } else if (/claude-3-(5-)?/i.test(model.id)) {
+        contextWindow = 200000;
+        maxTokens = 8192;
+      } else {
+        contextWindow = 200000;
+        maxTokens = 64000;
+      }
+    }
+
+    if (/opus-4-6/i.test(model.id)) {
+      thinkingLevelMap = { ...(thinkingLevelMap ?? {}), xhigh: "max" };
+    } else if (/opus-4-7/i.test(model.id)) {
+      thinkingLevelMap = { ...(thinkingLevelMap ?? {}), xhigh: "xhigh" };
+    }
+
+    nextModel = {
+      ...nextModel,
+      reasoning: isReasoning,
+      contextWindow,
+      maxTokens,
+      thinkingLevelMap,
+    };
+  } else if (/gemini/i.test(model.id)) {
+    const isReasoning = Boolean(model.reasoning) || /high|pro|thinking|agent/i.test(model.id);
+    nextModel = {
+      ...nextModel,
+      reasoning: isReasoning,
+      contextWindow: model.contextWindow && model.contextWindow !== 128000 ? model.contextWindow : 1000000,
+      maxTokens: model.maxTokens && model.maxTokens !== 16384 ? model.maxTokens : 65536,
+    };
+  } else {
+    const isReasoning = Boolean(model.reasoning) || /gpt-5|codex|^o[1-9]|reason|think/i.test(model.id);
+    nextModel = {
+      ...nextModel,
+      reasoning: isReasoning,
+      contextWindow: model.contextWindow && model.contextWindow !== 128000 ? model.contextWindow : 400000,
+      maxTokens: model.maxTokens && model.maxTokens !== 16384 ? model.maxTokens : 128000,
+      thinkingLevelMap: isReasoning ? { ...(model.thinkingLevelMap ?? {}), minimal: null } : model.thinkingLevelMap,
+    };
+  }
+
   return nextModel;
 }
 

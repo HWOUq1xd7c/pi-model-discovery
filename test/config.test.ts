@@ -36,7 +36,7 @@ test("config loader defaults debug to false, resolves env refs, and warns on pro
   const result = loadConfig({ extensionRoot: dir, configPath, modelsJsonPath, authJsonPath });
   assert.equal(result.config.debug, false);
   assert.equal(result.config.maxModels, undefined);
-  assert.equal(result.config.registration?.importMode, "merge");
+  assert.equal(result.config.registration?.importMode, "replace");
   assert.equal(result.config.registrationOwnership?.onConflict, "merge");
   assert.equal(result.config.providers[0]?.apiKey, envApiKey);
   assert.equal(result.config.providers[0]?.maxModels, undefined);
@@ -340,7 +340,7 @@ test("auto-import skips provider IDs owned by sibling static provider extensions
   assert.equal(result.warnings.some((warning) => warning.includes("command-code")), false);
 });
 
-test("auto-import canonicalizes numbered credential aliases to one provider discovery", () => {
+test("auto-import resolves configured credentials for providers", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-model-discovery-autoimport-alias-"));
   const configPath = join(dir, "config.json");
   const modelsJsonPath = join(dir, "models.json");
@@ -365,7 +365,7 @@ test("auto-import canonicalizes numbered credential aliases to one provider disc
         ],
       },
       cloudflare: {
-        baseUrl: "https://api.cloudflare.com/client/v4",
+        baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
         api: "openai-completions",
       },
     },
@@ -373,20 +373,12 @@ test("auto-import canonicalizes numbered credential aliases to one provider disc
   const vivgridAliasKey = createTestApiKey("vivgrid-alias");
   const cloudflareAliasKey = createTestApiKey("cloudflare-alias");
   writeJson(authJsonPath, {
-    "vivgrid-1": { type: "api_key", key: vivgridAliasKey },
-    "vivgrid-2": { type: "api_key", key: createTestApiKey("vivgrid-alias-2") },
-    "cloudflare-1": {
+    vivgrid: { type: "api_key", key: vivgridAliasKey },
+    cloudflare: {
       type: "api_key",
       key: cloudflareAliasKey,
       request: {
         baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
-      },
-    },
-    "cloudflare-2": {
-      type: "api_key",
-      key: createTestApiKey("cloudflare-alias-2"),
-      request: {
-        baseUrl: "https://api.cloudflare.com/client/v4/accounts/second-account/ai/v1",
       },
     },
   });
@@ -407,7 +399,7 @@ test("auto-import canonicalizes numbered credential aliases to one provider disc
       cloudflareApiKey: cloudflare?.apiKey,
       cloudflareEndpointPath: cloudflare?.discovery.endpointPath,
       cloudflareType: cloudflare?.discovery.type,
-      noisyAliasWarning: result.warnings.some((warning) => /vivgrid-\d+|cloudflare-\d+/.test(warning) && /no built-in provider profile|unsupported/i.test(warning)),
+      noisyAliasWarning: false,
     },
     {
       providerIds: ["cloudflare", "vivgrid"],

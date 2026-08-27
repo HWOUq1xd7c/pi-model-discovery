@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 
 import { getBuiltInProviderProfile, builtInProfileAllowsCredential, listBuiltInProviderProfileIds, type BuiltInCredentialKind, type BuiltInProviderProfile } from "../discovery/builtin-profiles.js";
@@ -116,13 +117,18 @@ function readJsonFileWithTransientRetry(path: string): unknown {
 }
 
 function resolveAgentDir(extensionRoot: string): string {
+  if (process.env.PI_CODING_AGENT_DIR && existsSync(process.env.PI_CODING_AGENT_DIR)) {
+    return process.env.PI_CODING_AGENT_DIR;
+  }
   let current = resolve(extensionRoot);
   const { root } = parse(current);
   while (true) {
     if (current === root) break;
-    if (existsSync(join(current, "auth.json"))) return current;
+    if (existsSync(join(current, "auth.json")) || existsSync(join(current, "models.json"))) return current;
     current = dirname(current);
   }
+  const defaultAgentDir = join(homedir(), ".pi", "agent");
+  if (existsSync(defaultAgentDir)) return defaultAgentDir;
   return resolve(extensionRoot, "..", "..");
 }
 

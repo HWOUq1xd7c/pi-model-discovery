@@ -54,7 +54,7 @@ test("enrichment applies cache before models.dev so catalog metadata replaces st
   const lookup: ModelsDevLookup = new Map([
     ["raw-model", { id: "raw-model", name: "Raw Model", reasoning: false, contextWindow: 200000, maxTokens: 8192, cost: { input: 1, output: 2 } }],
   ]);
-  const enriched = enrichProviderModels(provider, [{ id: "raw-model" }], lookup, [model("raw-model", "Cached Name", 3, 4)]);
+  const enriched = enrichProviderModels(provider, [{ id: "raw-model" }], lookup);
   assert.equal(enriched[0]?.id, "raw-model");
   assert.equal(enriched[0]?.name, "Raw Model");
   assert.equal(enriched[0]?.reasoning, true);
@@ -91,13 +91,6 @@ test("enrichment uses endpoint aliases for models.dev and keeps catalog metadata
       } as never,
     ],
     lookup,
-    [
-      {
-        ...model("qwen3.6-plus-thinking-search", "Cached Variant", 0, 0),
-        sources: { dynamic: true, globalDefaults: true },
-        capabilityProvenance: { id: "dynamic" },
-      },
-    ],
   );
 
   assert.deepEqual(
@@ -339,13 +332,6 @@ test("enrichment strips gateway variants before catalog lookup and enables OpenA
     { ...provider, id: "qianxiang", source: "auto-import", defaults: {}, modelDefaults: {} },
     [{ id: "gpt-5.5-openai-compact" }],
     lookup,
-    [
-      {
-        ...model("gpt-5.5-openai-compact", "Cached Compact", 0, 0),
-        sources: { dynamic: true, globalDefaults: true },
-        capabilityProvenance: { id: "dynamic" },
-      },
-    ],
   );
 
   assert.deepEqual(
@@ -419,7 +405,6 @@ test("auto-import enrichment lets models.json defaults override catalog metadata
     },
     [{ id: "auto-model" }],
     lookup,
-    [model("auto-model", "Cached Name", 7, 8)],
   );
 
   assert.deepEqual(

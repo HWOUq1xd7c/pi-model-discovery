@@ -195,7 +195,6 @@ test("enrichment records per-capability provenance for dynamic, catalog, cache, 
     nextProvider,
     [rawModel({ defaults: { maxTokens: 32_000, compat: { strict: true } as never } })],
     lookup,
-    [pricedModel({ name: "Cached Catalog Model", contextWindow: 200_000 })],
   );
 
   assert.deepEqual(

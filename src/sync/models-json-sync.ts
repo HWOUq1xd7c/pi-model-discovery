@@ -65,7 +65,7 @@ function mergeDiscoveredModel(discovered: ProviderModelConfig, existing: Record<
   };
 }
 
-export function toCleanProviderModelConfig(model: DiscoveredModel): ProviderModelConfig {
+export function toCleanProviderModelConfig(model: DiscoveredModel, provider?: ProviderConfigEntry): ProviderModelConfig {
   const input = (model.input ?? []).filter((entry): entry is "text" | "image" => entry === "text" || entry === "image");
   const config: ProviderModelConfig & { samplingParams?: Record<string, unknown> } = {
     id: model.id,
@@ -81,6 +81,8 @@ export function toCleanProviderModelConfig(model: DiscoveredModel): ProviderMode
     maxTokens: model.maxTokens ?? 16384,
   };
 
+  if (model.api && (!provider || model.api !== provider.api)) config.api = model.api;
+  if (model.baseUrl && (!provider || model.baseUrl !== provider.baseUrl)) config.baseUrl = model.baseUrl;
   if (model.reasoning !== undefined) config.reasoning = model.reasoning;
   if (model.thinkingLevelMap && Object.keys(model.thinkingLevelMap).length > 0) config.thinkingLevelMap = { ...model.thinkingLevelMap };
   if (model.compat && Object.keys(model.compat).length > 0) config.compat = { ...model.compat };
@@ -190,7 +192,7 @@ export async function syncModelsJson(options: SyncModelsJsonOptions): Promise<Sy
     const withQuirks = applyProviderDefaultsAndQuirks(provider, enriched);
     const modelConfigs = withQuirks
       .filter((model) => isTextCompletionModel(provider, model))
-      .map(toCleanProviderModelConfig);
+      .map((model) => toCleanProviderModelConfig(model, provider));
     const existingProviderEntry = isRecord(providerEntries[provider.id]) ? providerEntries[provider.id] : {};
     const { merged, added, updated } = mergeModelEntries(existingProviderEntry.models, modelConfigs);
 

@@ -41,6 +41,8 @@ export function configFor(provider: ProviderConfigEntry): ExtensionConfig {
   return {
     enabled: true,
     debug: false,
+    refreshOnStart: true,
+    refreshIntervalMs: 0,
     cacheTTL: 60_000,
     cacheFile: "cache.json",
     maxModels: 10,
@@ -254,6 +256,8 @@ export function verifierExtensionConfig(providers: ProviderConfigEntry[]): Exten
   return {
     enabled: true,
     debug: false,
+    refreshOnStart: true,
+    refreshIntervalMs: 0,
     cacheTTL: 60_000,
     cacheFile: "cache.json",
     maxModels: 100,
